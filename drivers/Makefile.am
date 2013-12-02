@@ -74,6 +74,7 @@ libtapdisk_la_SOURCES += tapdisk-fdreceiver.c
 libtapdisk_la_SOURCES += tapdisk-fdreceiver.h
 libtapdisk_la_SOURCES += md5.c
 libtapdisk_la_SOURCES += md5.h
+libtapdisk_la_SOURCES += crc32.h
 libtapdisk_la_SOURCES += crc32.c
 
 libtapdisk_la_SOURCES += block-aio.c
