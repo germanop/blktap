@@ -80,5 +80,6 @@ control/Makefile
 drivers/Makefile
 include/Makefile
 tapback/Makefile
+tmp/Makefile
 ])
 AC_OUTPUT

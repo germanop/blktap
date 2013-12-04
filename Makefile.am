@@ -10,6 +10,7 @@ SUBDIRS += control
 SUBDIRS += drivers
 SUBDIRS += include
 SUBDIRS += tapback
+SUBDIRS += tmp
 
 if ENABLE_PART
 MAYBE_part = part
