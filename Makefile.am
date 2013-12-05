@@ -6,11 +6,11 @@
 SUBDIRS  = lvm
 SUBDIRS += $(MAYBE_part)
 SUBDIRS += vhd
+SUBDIRS += tmp
 SUBDIRS += control
 SUBDIRS += drivers
 SUBDIRS += include
 SUBDIRS += tapback
-SUBDIRS += tmp
 
 if ENABLE_PART
 MAYBE_part = part

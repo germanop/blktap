@@ -63,6 +63,7 @@
 #include "tapdisk-storage.h"
 
 #include "crc32.h"
+#include "payload.h"
 
 unsigned int SPB;
 
@@ -402,12 +403,22 @@ vhd_kill_footer(struct vhd_state *s)
 static inline void
 update_next_db(struct vhd_state *s, uint64_t next_db)
 {
+  int err;
+
   DPRINTF("update_next_db");
 
   s->next_db = next_db;
 
   if (!(s->flags & VHD_FLAG_OPEN_THIN))
     return;
+
+  /* socket message block */
+  struct payload message;
+  init_payload(&message);
+  message.req = next_db;
+  err = thin_sock_comm(&message);
+  if (err)
+    DBG(TLOG_WARN, "socket returned: %d\n", err);
 
   struct stats_t {
     int32_t len;

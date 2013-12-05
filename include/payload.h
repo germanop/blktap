@@ -12,4 +12,7 @@ struct payload {
 int init_payload(struct payload *);
 void print_payload(struct payload *);
 
+/* Temporary location */
+int thin_sock_comm(struct payload *);
+
 #endif /* payload.h */
