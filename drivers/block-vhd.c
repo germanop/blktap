@@ -401,24 +401,26 @@ vhd_kill_footer(struct vhd_state *s)
 
 
 static inline void
-update_next_db(struct vhd_state *s, uint64_t next_db)
+update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 {
-  int err;
+	int err;
 
-  DPRINTF("update_next_db");
+	DPRINTF("update_next_db");
 
-  s->next_db = next_db;
+	s->next_db = next_db;
 
-  if (!(s->flags & VHD_FLAG_OPEN_THIN))
-    return;
+	if (!(s->flags & VHD_FLAG_OPEN_THIN))
+		return;
 
-  /* socket message block */
-  struct payload message;
-  init_payload(&message);
-  message.req = next_db;
-  err = thin_sock_comm(&message);
-  if (err)
-    DBG(TLOG_WARN, "socket returned: %d\n", err);
+	if (notify) {
+		/* socket message block */
+		struct payload message;
+		init_payload(&message);
+		message.req = next_db;
+		err = thin_sock_comm(&message);
+		if (err)
+			DBG(TLOG_WARN, "socket returned: %d\n", err);
+	}
 
   struct stats_t {
     int32_t len;
@@ -452,7 +454,7 @@ find_next_free_block(struct vhd_state *s)
 	if (err)
 		return err;
 
-	update_next_db(s, secs_round_up(eom));
+	update_next_db(s, secs_round_up(eom), 0);
 	s->first_db = s->next_db;
 	if ((s->first_db + s->bm_secs) % s->spp)
 		s->first_db += (s->spp - ((s->first_db + s->bm_secs) % s->spp));
@@ -462,7 +464,7 @@ find_next_free_block(struct vhd_state *s)
 		if (entry != DD_BLK_UNUSED && entry >= s->next_db) {
 			next_db = (uint64_t)entry + (uint64_t)s->spb
 				+ (uint64_t)s->bm_secs;
-			update_next_db(s, next_db);
+			update_next_db(s, next_db, 0);
 		}
 
 		if (s->next_db > UINT_MAX)
@@ -812,8 +814,8 @@ __vhd_open(td_driver_t *driver, const char *name, vhd_flag_t flags)
 	vhd_log_open(s);
 
 	if(!test_vhd_flag(flags, VHD_FLAG_OPEN_RDONLY)) {
-	  vhd_stats_open(s, name);
-	  update_next_db(s, s->next_db); /* Write it into the stats file */
+		vhd_stats_open(s, name);
+		update_next_db(s, s->next_db, 0);
 	}
 
 	SPB = s->spb;
@@ -1661,7 +1663,7 @@ allocate_block(struct vhd_state *s, uint32_t blk)
 	if (next_db > UINT_MAX)
 		return -ENOSPC;
 
-	update_next_db(s,next_db);
+	update_next_db(s,next_db, 1);
 
 	s->bat.pbw_blk = blk;
 	s->bat.pbw_offset = s->next_db;
@@ -2270,7 +2272,7 @@ finish_bat_write(struct vhd_request *req)
 
 	if (!req->error) {
 		bat_entry(s, s->bat.pbw_blk) = s->bat.pbw_offset;
-		update_next_db(s, s->bat.pbw_offset + s->spb + s->bm_secs);
+		update_next_db(s, s->bat.pbw_offset + s->spb + s->bm_secs, 0);
 	} else
 		tx->error = req->error;
 
