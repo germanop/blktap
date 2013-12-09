@@ -240,6 +240,9 @@ struct vhd_state {
 	char			 *stats_mem;
 	char			 *stats_name;
 
+	/* thin provisioning data */
+	off64_t                   eof_bytes;
+
 	/* for redundant bitmap writes */
 	int                       padbm_size;
 	char                     *padbm_buf;
@@ -416,6 +419,7 @@ update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 		/* socket message block */
 		struct payload message;
 		init_payload(&message);
+		message.curr = s->eof_bytes;
 		message.req = next_db;
 		err = thin_sock_comm(&message);
 		if (err)
@@ -737,6 +741,15 @@ vhd_stats_open(struct vhd_state *s, const char *name)
   return;
 }
 
+static int
+vhd_thin_prepare(struct vhd_state *s)
+{
+	if ((s->eof_bytes = lseek64(s->vhd.fd, 0, SEEK_END)) == -1)
+		return -errno;
+
+	return 0;
+}
+
 static void
 vhd_stats_close(struct vhd_state *s)
 {
@@ -816,6 +829,10 @@ __vhd_open(td_driver_t *driver, const char *name, vhd_flag_t flags)
 	if(!test_vhd_flag(flags, VHD_FLAG_OPEN_RDONLY)) {
 		vhd_stats_open(s, name);
 		update_next_db(s, s->next_db, 0);
+	}
+
+	if(test_vhd_flag(flags, VHD_FLAG_OPEN_THIN)) {
+		vhd_thin_prepare(s);
 	}
 
 	SPB = s->spb;
