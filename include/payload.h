@@ -7,6 +7,7 @@ struct payload {
 	pid_t id;
 	uint64_t curr;
 	uint64_t req;
+	off64_t vhd_size;
 };
 
 int init_payload(struct payload *);

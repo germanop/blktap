@@ -418,9 +418,13 @@ update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 	if (notify) {
 		/* socket message block */
 		struct payload message;
+		off64_t vhd_sectors = (off64_t)s->driver->info.size;
+		off64_t vhd_s_size  = (off64_t)s->driver->info.sector_size;
+
 		init_payload(&message);
 		message.curr = s->eof_bytes;
 		message.req = next_db;
+		message.vhd_size = vhd_sectors * vhd_s_size;
 		err = thin_sock_comm(&message);
 		if (err)
 			DBG(TLOG_WARN, "socket returned: %d\n", err);
