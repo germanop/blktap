@@ -895,6 +895,10 @@ _vhd_open(td_driver_t *driver, const char *name, td_flag_t flags)
 	/* pre-allocate for all but NFS and LVM storage */
 	driver->storage = tapdisk_storage_type(name);
 
+	/* Disable thin provisioning if not LVM */
+	if (driver->storage != TAPDISK_STORAGE_TYPE_LVM)
+		clear_vhd_flag(vhd_flags, VHD_FLAG_OPEN_THIN);
+
 	if (driver->storage != TAPDISK_STORAGE_TYPE_NFS &&
 	    driver->storage != TAPDISK_STORAGE_TYPE_LVM)
 		vhd_flags |= VHD_FLAG_OPEN_PREALLOCATE;
