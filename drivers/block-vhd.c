@@ -1684,7 +1684,7 @@ allocate_block(struct vhd_state *s, uint32_t blk)
 	if (next_db > UINT_MAX)
 		return -ENOSPC;
 
-	update_next_db(s,next_db, 1);
+	update_next_db(s,next_db, 0);
 
 	s->bat.pbw_blk = blk;
 	s->bat.pbw_offset = s->next_db;
@@ -2293,7 +2293,7 @@ finish_bat_write(struct vhd_request *req)
 
 	if (!req->error) {
 		bat_entry(s, s->bat.pbw_blk) = s->bat.pbw_offset;
-		update_next_db(s, s->bat.pbw_offset + s->spb + s->bm_secs, 0);
+		update_next_db(s, s->bat.pbw_offset + s->spb + s->bm_secs, 1);
 	} else
 		tx->error = req->error;
 
