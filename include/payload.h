@@ -4,10 +4,16 @@
 #include <inttypes.h>
 
 typedef enum {
+	/* server */
 	PAYLOAD_ACCEPTED = 0,
 	PAYLOAD_REJECTED,
 	PAYLOAD_DONE,
-	PAYLOAD_WAIT
+	PAYLOAD_WAIT,
+	/* client */
+	PAYLOAD_QUERY,
+	PAYLOAD_REQUEST,
+	/* generic */
+	PAYLOAD_UNDEF
 } payload_message_t;
 
 struct payload {

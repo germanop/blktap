@@ -7,7 +7,7 @@ int init_payload(struct payload *pload)
 	pload->curr = 0;
 	pload->req = 0;
 	pload->vhd_size = 0;
-	pload->reply = PAYLOAD_ACCEPTED;
+	pload->reply = PAYLOAD_UNDEF;
 	return 0;
 }
 
