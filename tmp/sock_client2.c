@@ -33,7 +33,11 @@ thin_sock_comm(struct payload *message)
 		return -errno;
 
 	/* TBD: very basic write, need a while loop */
-        if (write(sfd, message, len) != len)
+	if (write(sfd, message, len) != len)
+		return -errno;
+
+	/* TBD: very basic read */
+	if (read(sfd, message, len) != len)
 		return -errno;
 
 	close(sfd);

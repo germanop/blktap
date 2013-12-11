@@ -3,11 +3,19 @@
 #include <sys/types.h>
 #include <inttypes.h>
 
+typedef enum {
+	PAYLOAD_ACCEPTED = 0,
+	PAYLOAD_REJECTED,
+	PAYLOAD_DONE,
+	PAYLOAD_WAIT
+} payload_message_t;
+
 struct payload {
 	pid_t id;
 	uint64_t curr;
 	uint64_t req;
 	off64_t vhd_size;
+	payload_message_t reply;
 };
 
 int init_payload(struct payload *);

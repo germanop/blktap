@@ -8,6 +8,9 @@
 
 #define BACKLOG 5
 
+static inline int process_request(int, struct payload *);
+static inline int dummy_reply(int, struct payload *);
+
 int
 main(int argc, char *argv[]) {
 	struct sockaddr_un addr;
@@ -36,7 +39,7 @@ main(int argc, char *argv[]) {
 			return -errno;
 
 		while ((numRead = read(cfd, &buf, sizeof(buf))) > 0)
-			print_payload(&buf);
+			process_request(cfd, &buf);
 
 		if (numRead == -1)
 			return -errno;
@@ -46,3 +49,21 @@ main(int argc, char *argv[]) {
 	}
 }
 
+static inline int
+process_request(int fd, struct payload * buf)
+{
+	print_payload(buf);
+	return dummy_reply(fd, buf);
+}
+
+static inline int
+dummy_reply(int fd, struct payload * buf)
+{
+	buf->reply = PAYLOAD_ACCEPTED;
+
+	/* TBD: very basic write, need a while loop */
+	if (write(fd, buf, sizeof(*buf)) != sizeof(*buf))
+		return -errno;
+
+	return 0;
+}
