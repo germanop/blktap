@@ -403,10 +403,58 @@ vhd_kill_footer(struct vhd_state *s)
 }
 
 
+static int
+thin_prepare_req(const struct vhd_state * s,
+		 struct payload * message,
+		 uint64_t next_db, int query)
+{
+	/*
+	 * sectors can be converted in bytes using info.sector_size
+	 * that happens to be calculated using the same VHD define used
+	 * by vhd_sectors_to_bytes. This is no more unreliable than using
+	 * 2 different macros to do the job (see __vhd_open)
+	 */
+	uint64_t virt_bytes, phy_bytes, req_bytes;
+	const uint64_t warn1 = 52428800; /* 50 MBs warning */
+	const uint64_t warn2 = 4194304; /* 4 MBs warning */
+	uint64_t safe_threshold, critical_threshold;
+
+	virt_bytes = vhd_sectors_to_bytes(s->driver->info.size);
+	phy_bytes = s->eof_bytes;
+	req_bytes = vhd_sectors_to_bytes(next_db);
+
+	/* we want to exit as soon as possible if not needed */
+	if (phy_bytes >= virt_bytes)
+		return 1; /* nothing to be done: space is enough */
+	safe_threshold = (phy_bytes < warn1) ? 0 : (phy_bytes - warn1);
+	if (req_bytes < safe_threshold)
+		return 1; /* we do not bother yet */
+
+	init_payload(message);
+
+	critical_threshold = (phy_bytes < warn2) ? 0 : (phy_bytes - warn2);
+	if (req_bytes > critical_threshold) {
+		/* this must be our last request so we have to loop for
+		   a final answer or block */
+		message->reply = PAYLOAD_REQUEST;
+	} else { /* if we are here it means we hit the threshold */
+		/* if we already issued a request just check its status */
+		message->reply = query ? PAYLOAD_QUERY: PAYLOAD_REQUEST;
+	}
+
+	message->curr = phy_bytes;
+	message->req = req_bytes;
+	message->vhd_size = virt_bytes;
+
+	return 0;
+}
+
 static inline void
 update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 {
 	int err;
+	struct payload message;
+	static int query = 0; /* distinguish requests from queries */
 
 	DPRINTF("update_next_db");
 
@@ -415,17 +463,10 @@ update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 	if (!(s->flags & VHD_FLAG_OPEN_THIN))
 		return;
 
-	if (notify) {
+	if (notify && !thin_prepare_req(s, &message, next_db, query)) {
 		/* socket message block */
-		struct payload message;
-		off64_t vhd_sectors = (off64_t)s->driver->info.size;
-		off64_t vhd_s_size  = (off64_t)s->driver->info.sector_size;
-
-		init_payload(&message);
-		message.curr = s->eof_bytes;
-		message.req = next_db;
-		message.vhd_size = vhd_sectors * vhd_s_size;
 		err = thin_sock_comm(&message);
+		query = 1; /* from now on just ask */
 		if (err)
 			DBG(TLOG_WARN, "socket returned: %d\n", err);
 	}

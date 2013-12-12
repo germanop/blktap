@@ -18,5 +18,6 @@ void print_payload(struct payload *pload)
 	printf("current size = %"PRIu64"\n", pload->curr);
 	printf("requested size = %"PRIu64"\n", pload->req);
 	printf("virtual size = %"PRIu64"\n", pload->vhd_size);
+	printf("request type = %d\n", pload->reply);
 	return;
 }
