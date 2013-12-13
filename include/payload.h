@@ -2,6 +2,9 @@
 #define _PAYLOAD_H    1
 #include <sys/types.h>
 #include <inttypes.h>
+#include "tapdisk-message.h"
+
+#define PAYLOAD_MAX_PATH_LENGTH TAPDISK_MESSAGE_MAX_PATH_LENGTH
 
 typedef enum {
 	/* server */
@@ -18,6 +21,7 @@ typedef enum {
 
 struct payload {
 	pid_t id;
+	char path[PAYLOAD_MAX_PATH_LENGTH];
 	uint64_t curr;
 	uint64_t req;
 	off64_t vhd_size;

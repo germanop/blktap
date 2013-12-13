@@ -442,6 +442,7 @@ thin_prepare_req(const struct vhd_state * s,
 		message->reply = query ? PAYLOAD_QUERY: PAYLOAD_REQUEST;
 	}
 
+	strncpy(message->path, s->vhd.file, PAYLOAD_MAX_PATH_LENGTH);
 	message->curr = phy_bytes;
 	message->req = req_bytes;
 	message->vhd_size = virt_bytes;

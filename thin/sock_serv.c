@@ -9,9 +9,11 @@
 
 #define BACKLOG 5
 
-static inline int process_request(int, struct payload *);
+static inline int process_payload(int, struct payload *);
 static inline int dummy_reply(int, struct payload *);
 static int (*req_reply)(int , struct payload * );
+static int handle_request(struct payload * buf);
+static int handle_query(struct payload * buf);
 
 int
 main(int argc, char *argv[]) {
@@ -43,7 +45,7 @@ main(int argc, char *argv[]) {
 			return -errno;
 
 		while ((numRead = read(cfd, &buf, sizeof(buf))) > 0)
-			process_request(cfd, &buf);
+			process_payload(cfd, &buf);
 
 		if (numRead == -1)
 			return -errno;
@@ -54,10 +56,14 @@ main(int argc, char *argv[]) {
 }
 
 static inline int
-process_request(int fd, struct payload * buf)
+process_payload(int fd, struct payload * buf)
 {
+	int err;
+
 	print_payload(buf);
-	return req_reply(fd, buf);
+	err = req_reply(fd, buf);
+
+	return err;
 }
 
 static int
@@ -65,26 +71,45 @@ dummy_reply(int fd, struct payload * buf)
 {
 	switch (buf->reply) {
 	case PAYLOAD_REQUEST:
-		/* placeholder for req handling */
-		buf->reply = PAYLOAD_ACCEPTED;
-		print_payload(buf);
-		printf("EOM\n");
+		handle_request(buf);
 		break;
 	case PAYLOAD_QUERY:
-		/* placeholder for query handling */
-		buf->reply = PAYLOAD_WAIT;
-		print_payload(buf);
-		printf("EOM\n");
+		handle_query(buf);
 		break;
 	default:
 		buf->reply = PAYLOAD_UNDEF;
 		print_payload(buf);
-		printf("EOM\n");		
 	}
+	print_payload(buf);
+	printf("EOM\n\n");
 
 	/* TBD: very basic write, need a while loop */
 	if (write(fd, buf, sizeof(*buf)) != sizeof(*buf))
 		return -errno;
+
+	return 0;
+}
+
+static int
+handle_request(struct payload * buf)
+{
+	if (buf->reply != PAYLOAD_REQUEST)
+		return 1;
+
+	printf("I promise I will do something about it..");
+	buf->reply = PAYLOAD_ACCEPTED;
+
+	return 0;
+}
+
+static int
+handle_query(struct payload * buf)
+{
+	if (buf->reply != PAYLOAD_QUERY)
+		return 1;
+
+	printf("Working on it.. be patient");
+	buf->reply = PAYLOAD_WAIT;
 
 	return 0;
 }

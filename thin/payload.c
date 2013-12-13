@@ -15,6 +15,7 @@ void print_payload(struct payload *pload)
 {
 	printf("payload data:\n");
 	printf("id = %d\n", pload->id);
+	printf("path = %s\n", pload->path);
 	printf("current size = %"PRIu64"\n", pload->curr);
 	printf("requested size = %"PRIu64"\n", pload->req);
 	printf("virtual size = %"PRIu64"\n", pload->vhd_size);
