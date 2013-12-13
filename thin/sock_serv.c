@@ -3,6 +3,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdio.h>
 #include "blktap.h"
 #include "payload.h"
 
@@ -10,6 +11,7 @@
 
 static inline int process_request(int, struct payload *);
 static inline int dummy_reply(int, struct payload *);
+static int (*req_reply)(int , struct payload * );
 
 int
 main(int argc, char *argv[]) {
@@ -17,6 +19,8 @@ main(int argc, char *argv[]) {
 	int sfd, cfd;
 	ssize_t numRead;
 	struct payload buf;
+
+	req_reply = dummy_reply;
 
 	sfd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (sfd == -1)
@@ -53,13 +57,30 @@ static inline int
 process_request(int fd, struct payload * buf)
 {
 	print_payload(buf);
-	return dummy_reply(fd, buf);
+	return req_reply(fd, buf);
 }
 
-static inline int
+static int
 dummy_reply(int fd, struct payload * buf)
 {
-	buf->reply = PAYLOAD_ACCEPTED;
+	switch (buf->reply) {
+	case PAYLOAD_REQUEST:
+		/* placeholder for req handling */
+		buf->reply = PAYLOAD_ACCEPTED;
+		print_payload(buf);
+		printf("EOM\n");
+		break;
+	case PAYLOAD_QUERY:
+		/* placeholder for query handling */
+		buf->reply = PAYLOAD_WAIT;
+		print_payload(buf);
+		printf("EOM\n");
+		break;
+	default:
+		buf->reply = PAYLOAD_UNDEF;
+		print_payload(buf);
+		printf("EOM\n");		
+	}
 
 	/* TBD: very basic write, need a while loop */
 	if (write(fd, buf, sizeof(*buf)) != sizeof(*buf))
