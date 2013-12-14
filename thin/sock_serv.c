@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <sys/un.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -5,6 +6,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <sys/queue.h> /* non POSIX */
 #include "blktap.h"
 #include "payload.h"
 
@@ -19,10 +21,17 @@ static void * process_req(void *);
 
 pthread_mutex_t req_mutex;
 pthread_cond_t req_cond;
-int requests = 0;
+SIMPLEQ_HEAD(reqhead, req_entry) req_head;
+struct req_entry {
+	struct payload data;
+	SIMPLEQ_ENTRY(req_entry) entries;
+};
+
 
 int
 main(int argc, char *argv[]) {
+
+	SIMPLEQ_INIT(&req_head);
 	pthread_t worker;
 
 	struct sockaddr_un addr;
@@ -109,13 +118,19 @@ dummy_reply(int fd, struct payload * buf)
 static int
 handle_request(struct payload * buf)
 {
+	struct req_entry * req;
+
 	if (buf->reply != PAYLOAD_REQUEST)
 		return 1;
 
-	printf("I promise I will do something about it..");
+	printf("I promise I will do something about it..\n");
+	req = malloc(sizeof(struct req_entry));
+	req->data = *buf;
 	buf->reply = PAYLOAD_ACCEPTED;
 	pthread_mutex_lock(&req_mutex);
-	++requests;
+	
+	SIMPLEQ_INSERT_TAIL(&req_head, req, entries);
+
 	pthread_cond_signal(&req_cond);
 	pthread_mutex_unlock(&req_mutex);
 
@@ -128,7 +143,7 @@ handle_query(struct payload * buf)
 	if (buf->reply != PAYLOAD_QUERY)
 		return 1;
 
-	printf("Working on it.. be patient");
+	printf("Working on it.. be patient\n");
 	buf->reply = PAYLOAD_WAIT;
 
 	return 0;
@@ -137,17 +152,22 @@ handle_query(struct payload * buf)
 static void *
 process_req(void * ap)
 {
-	int temp_req;
+	struct req_entry * req;
+	struct payload * data;
 
 	for(;;) {
 		pthread_mutex_lock(&req_mutex);
 
-		while (requests == 0) {
+		while (SIMPLEQ_EMPTY(&req_head)) {
 			pthread_cond_wait(&req_cond, &req_mutex);
 		}
 
-		temp_req = requests--;
+		req = SIMPLEQ_FIRST(&req_head);
+		SIMPLEQ_REMOVE_HEAD(&req_head, entries);
 		pthread_mutex_unlock(&req_mutex);
-		printf("worker_thread: pending req = %d\n", temp_req);
+		data = &req->data;
+		printf("worker_thread: completed %u %s \n",
+		       (unsigned)data->id, data->path);
+		free(req);
 	}
 }
