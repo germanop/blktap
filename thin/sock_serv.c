@@ -67,7 +67,7 @@ main(int argc, char *argv[]) {
 
 	req_reply = dummy_reply;
 
-	sfd = socket(AF_UNIX, SOCK_STREAM, 0);
+	sfd = socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0);
 	if (sfd == -1)
 		return -errno;
 
@@ -83,7 +83,7 @@ main(int argc, char *argv[]) {
 
 	for (;;) {
 
-		cfd = accept(sfd, NULL, NULL);
+		cfd = accept4(sfd, NULL, NULL, SOCK_CLOEXEC);
 		if (cfd == -1)
 			return -errno;
 

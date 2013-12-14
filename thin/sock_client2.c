@@ -21,7 +21,7 @@ thin_sock_comm(struct payload *message)
 	pid = getpid();
 	message->id = pid;
 
-	sfd = socket(AF_UNIX, SOCK_STREAM, 0);
+	sfd = socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0);
 	if (sfd == -1)
 		return -errno; /* to be handled */
 
