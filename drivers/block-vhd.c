@@ -435,8 +435,8 @@ thin_prepare_req(const struct vhd_state * s,
 	critical_threshold = (phy_bytes < warn2) ? 0 : (phy_bytes - warn2);
 	if (req_bytes > critical_threshold) {
 		/* this must be our last request so we have to loop for
-		   a final answer or block */
-		message->reply = PAYLOAD_REQUEST;
+		   a final answer or block: do something more.. */
+		message->reply = PAYLOAD_QUERY;
 	} else { /* if we are here it means we hit the threshold */
 		/* if we already issued a request just check its status */
 		message->reply = query ? PAYLOAD_QUERY: PAYLOAD_REQUEST;
