@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdio.h>
+#include <pthread.h>
 #include "blktap.h"
 #include "payload.h"
 
@@ -14,13 +15,28 @@ static inline int dummy_reply(int, struct payload *);
 static int (*req_reply)(int , struct payload * );
 static int handle_request(struct payload * buf);
 static int handle_query(struct payload * buf);
+static void * process_req(void *);
+
+pthread_mutex_t req_mutex;
+pthread_cond_t req_cond;
+int requests = 0;
 
 int
 main(int argc, char *argv[]) {
+	pthread_t worker;
+
 	struct sockaddr_un addr;
 	int sfd, cfd;
 	ssize_t numRead;
 	struct payload buf;
+
+	/* pthread init section */
+	pthread_mutex_init(&req_mutex, NULL);
+	pthread_cond_init(&req_cond, NULL);
+	if (pthread_create(&worker, NULL, process_req, NULL)) {
+		printf("failed worker thread creation\n");
+		return 1;
+	}
 
 	req_reply = dummy_reply;
 
@@ -98,6 +114,10 @@ handle_request(struct payload * buf)
 
 	printf("I promise I will do something about it..");
 	buf->reply = PAYLOAD_ACCEPTED;
+	pthread_mutex_lock(&req_mutex);
+	++requests;
+	pthread_cond_signal(&req_cond);
+	pthread_mutex_unlock(&req_mutex);
 
 	return 0;
 }
@@ -112,4 +132,22 @@ handle_query(struct payload * buf)
 	buf->reply = PAYLOAD_WAIT;
 
 	return 0;
+}
+
+static void *
+process_req(void * ap)
+{
+	int temp_req;
+
+	for(;;) {
+		pthread_mutex_lock(&req_mutex);
+
+		while (requests == 0) {
+			pthread_cond_wait(&req_cond, &req_mutex);
+		}
+
+		temp_req = requests--;
+		pthread_mutex_unlock(&req_mutex);
+		printf("worker_thread: pending req = %d\n", temp_req);
+	}
 }

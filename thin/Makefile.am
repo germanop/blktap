@@ -1,6 +1,7 @@
 
 AM_CFLAGS  = -Wall
 AM_CFLAGS += -Werror
+AM_CFLAGS += -pthread
 
 AM_CPPFLAGS  = -D_GNU_SOURCE
 AM_CPPFLAGS += -I$(top_srcdir)/include
