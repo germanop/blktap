@@ -2,6 +2,7 @@
 #include <sys/un.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <errno.h>
 #include <stdio.h>
@@ -18,6 +19,7 @@ static int (*req_reply)(int , struct payload * );
 static int handle_request(struct payload * buf);
 static int handle_query(struct payload * buf);
 static void * process_req(void *);
+static int increase_size(off64_t size, const char * path);
 
 pthread_mutex_t req_mutex;
 pthread_cond_t req_cond;
@@ -169,5 +171,40 @@ process_req(void * ap)
 		printf("worker_thread: completed %u %s \n",
 		       (unsigned)data->id, data->path);
 		free(req);
+	}
+}
+
+/*
+ * @size: current size to increase in bytes
+ * @path: device full path
+ */
+static int
+increase_size(off64_t size, const char * path) {
+#define NCHARS 16
+	pid_t pid;
+	int status, num_read;
+	char ssize[NCHARS]; /* enough for G bytes */
+	size += 104857600; /* add 100 MB */
+
+	/* prepare size for command line */
+	num_read = snprintf(ssize, NCHARS, "-L""%"PRIu64"b", size);
+	if (num_read >= NCHARS)
+		return -1; /* size too big */
+
+	switch (pid = fork()) {
+	case -1:
+		return -1;
+	case 0: /* child */
+		execl("/usr/sbin/lvextend", "lvextend", ssize,
+		      path, (char *)NULL);
+		_exit(127); /* TBD */
+	default: /* parent */
+		if (waitpid(pid, &status, 0) == -1)
+			return -1;
+		else if (WIFEXITED(status)) /* normal exit? */
+			status = WEXITSTATUS(status);
+		else
+			return -1;
+		return status; /* actually 3 is as fine as 0.. */
 	}
 }
