@@ -20,6 +20,8 @@ static int handle_request(struct payload * buf);
 static int handle_query(struct payload * buf);
 static void * process_req(void *);
 static int increase_size(off64_t size, const char * path);
+static void parse_cmdline(int, char **);
+static int do_daemon(void);
 
 pthread_mutex_t req_mutex, srv_mutex;
 pthread_cond_t req_cond;
@@ -29,9 +31,19 @@ struct sq_entry {
 	SIMPLEQ_ENTRY(sq_entry) entries;
 };
 
+int daemonize;
 
 int
 main(int argc, char *argv[]) {
+	daemonize = 0;
+
+	/* accept command line opts */
+	parse_cmdline(argc, argv);
+
+	/* daemonize if required */
+	if (do_daemon() == -1)
+		return 1; /* can do better */
+
 	/* Init queues */
 	SIMPLEQ_INIT(&req_head);
 	SIMPLEQ_INIT(&srv_head);
@@ -243,4 +255,35 @@ increase_size(off64_t size, const char * path) {
 			return -1;
 		return status; /* actually 3 is as fine as 0.. */
 	}
+}
+
+
+static void
+parse_cmdline(int argc, char ** argv)
+{
+	int arg, fd_open = 0;
+
+	while ((arg = getopt(argc, argv, "df")) != EOF ) {
+		switch(arg) {
+		case 'd': /* daemonize and close fd */
+			daemonize = 1;
+			break;
+		case 'f': /* if daemonized leave fd open */
+			fd_open = 1;
+		default:
+			break;
+		}
+	}
+	daemonize += daemonize ? fd_open : 0;
+	return;
+}
+
+
+static int
+do_daemon()
+{
+	if (!daemonize)
+		return 0;
+
+	return daemon(0, daemonize - 1); /* root dir and close if needed */	
 }
