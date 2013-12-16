@@ -21,19 +21,21 @@ static int handle_query(struct payload * buf);
 static void * process_req(void *);
 static int increase_size(off64_t size, const char * path);
 
-pthread_mutex_t req_mutex;
+pthread_mutex_t req_mutex, srv_mutex;
 pthread_cond_t req_cond;
-SIMPLEQ_HEAD(reqhead, req_entry) req_head;
-struct req_entry {
+SIMPLEQ_HEAD(sqhead, sq_entry) req_head, srv_head;
+struct sq_entry {
 	struct payload data;
-	SIMPLEQ_ENTRY(req_entry) entries;
+	SIMPLEQ_ENTRY(sq_entry) entries;
 };
 
 
 int
 main(int argc, char *argv[]) {
-
+	/* Init queues */
 	SIMPLEQ_INIT(&req_head);
+	SIMPLEQ_INIT(&srv_head);
+
 	pthread_t worker;
 
 	struct sockaddr_un addr;
@@ -120,13 +122,13 @@ dummy_reply(int fd, struct payload * buf)
 static int
 handle_request(struct payload * buf)
 {
-	struct req_entry * req;
+	struct sq_entry * req;
 
 	if (buf->reply != PAYLOAD_REQUEST)
 		return 1;
 
 	printf("I promise I will do something about it..\n");
-	req = malloc(sizeof(struct req_entry));
+	req = malloc(sizeof(struct sq_entry));
 	req->data = *buf;
 	buf->reply = PAYLOAD_ACCEPTED;
 	pthread_mutex_lock(&req_mutex);
@@ -142,11 +144,33 @@ handle_request(struct payload * buf)
 static int
 handle_query(struct payload * buf)
 {
+	struct sq_entry * req;
+
 	if (buf->reply != PAYLOAD_QUERY)
 		return 1;
 
-	printf("Working on it.. be patient\n");
-	buf->reply = PAYLOAD_WAIT;
+	/* Check we have something done
+	 * For the time being we use a queue and check only
+	 * the first element but it is wrong: linked list and
+	 * search is the right thing to do
+	 */
+	pthread_mutex_lock(&srv_mutex);
+	if (SIMPLEQ_EMPTY(&srv_head)) {
+		pthread_mutex_unlock(&srv_mutex);
+		buf->reply = PAYLOAD_WAIT;
+		return 0;
+	}
+	/* check if first element is the one we want */
+	req = SIMPLEQ_FIRST(&srv_head);
+	if (req->data.id == buf->id) { /* Found: rm, copy, free */
+		SIMPLEQ_REMOVE_HEAD(&srv_head, entries);
+		pthread_mutex_unlock(&srv_mutex);
+		buf->reply = req->data.reply;
+		free(req);
+	} else { /* wait */
+		pthread_mutex_unlock(&srv_mutex);
+		buf->reply = PAYLOAD_WAIT;		
+	}
 
 	return 0;
 }
@@ -154,8 +178,9 @@ handle_query(struct payload * buf)
 static void *
 process_req(void * ap)
 {
-	struct req_entry * req;
+	struct sq_entry * req;
 	struct payload * data;
+	int ret;
 
 	for(;;) {
 		pthread_mutex_lock(&req_mutex);
@@ -164,13 +189,24 @@ process_req(void * ap)
 			pthread_cond_wait(&req_cond, &req_mutex);
 		}
 
+		/* pop from requests queue and unlock */
 		req = SIMPLEQ_FIRST(&req_head);
 		SIMPLEQ_REMOVE_HEAD(&req_head, entries);
 		pthread_mutex_unlock(&req_mutex);
+
 		data = &req->data;
-		printf("worker_thread: completed %u %s \n",
-		       (unsigned)data->id, data->path);
-		free(req);
+		ret = increase_size(data->curr, data->path);
+		if (ret == 0 || ret == 3) /* 3 means big enough */
+			data->reply = PAYLOAD_DONE;
+		else
+			data->reply = PAYLOAD_REJECTED;
+		printf("worker_thread: completed %u %s (%d)\n\n",
+		       (unsigned)data->id, data->path, ret);
+
+		/* push to served queue */
+		pthread_mutex_lock(&srv_mutex);
+		SIMPLEQ_INSERT_TAIL(&srv_head, req, entries);
+		pthread_mutex_unlock(&srv_mutex);
 	}
 }
 
