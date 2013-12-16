@@ -31,6 +31,8 @@ struct sq_entry {
 	SIMPLEQ_ENTRY(sq_entry) entries;
 };
 
+static struct sq_entry * find_and_remove(struct sqhead *, pid_t);
+
 int daemonize;
 
 int
@@ -161,21 +163,17 @@ handle_query(struct payload * buf)
 	if (buf->reply != PAYLOAD_QUERY)
 		return 1;
 
-	/* Check we have something done
-	 * For the time being we use a queue and check only
-	 * the first element but it is wrong: linked list and
-	 * search is the right thing to do
-	 */
+	/* Check we have something ready */
 	pthread_mutex_lock(&srv_mutex);
 	if (SIMPLEQ_EMPTY(&srv_head)) {
 		pthread_mutex_unlock(&srv_mutex);
 		buf->reply = PAYLOAD_WAIT;
 		return 0;
 	}
-	/* check if first element is the one we want */
-	req = SIMPLEQ_FIRST(&srv_head);
-	if (req->data.id == buf->id) { /* Found: rm, copy, free */
-		SIMPLEQ_REMOVE_HEAD(&srv_head, entries);
+
+	/* check if we have a served request for this query */
+	req = find_and_remove(&srv_head, buf->id);
+	if (req) {
 		pthread_mutex_unlock(&srv_mutex);
 		buf->reply = req->data.reply;
 		free(req);
@@ -186,6 +184,23 @@ handle_query(struct payload * buf)
 
 	return 0;
 }
+
+
+/* This function must be invoked with the corresponding mutex locked */
+static struct sq_entry *
+find_and_remove(struct sqhead * head, pid_t id)
+{
+	struct sq_entry * entry;
+	SIMPLEQ_FOREACH(entry, head, entries) {
+		if (entry->data.id == id) {
+			SIMPLEQ_REMOVE(head, entry, sq_entry, entries);
+			return entry;
+		}
+	}
+	/* No matches */
+	return NULL;
+}
+
 
 static void *
 process_req(void * ap)
