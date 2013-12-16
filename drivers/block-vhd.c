@@ -268,6 +268,7 @@ struct vhd_state {
 
 static void vhd_complete(void *, struct tiocb *, int);
 static void finish_data_transaction(struct vhd_state *, struct vhd_bitmap *);
+static int vhd_thin_prepare(struct vhd_state *);
 
 static struct vhd_state  *_vhd_master;
 static unsigned long      _vhd_zsize;
@@ -450,6 +451,23 @@ thin_prepare_req(const struct vhd_state * s,
 	return 0;
 }
 
+
+static int
+thin_parse_reply(const struct payload * buf, struct vhd_state *s, int * query)
+{
+	switch (buf->reply) {
+	case PAYLOAD_ACCEPTED:
+		*query = 1; /* next time just query */
+		break;
+	case PAYLOAD_WAIT:
+		break; /* just keep asking */
+	default: /* for now treat DONE and REJ the same */
+		*query = 0; /* we cannot query any more, it has been served */
+		vhd_thin_prepare(s);
+	}
+	return 0;
+}
+
 static inline void
 update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 {
@@ -470,6 +488,9 @@ update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 		query = 1; /* from now on just ask */
 		if (err)
 			DBG(TLOG_WARN, "socket returned: %d\n", err);
+		err = thin_parse_reply(&message, s, &query);
+		if (err)
+			DBG(TLOG_WARN, "thin_parse_reply returned: %d\n", err);
 	}
 
   struct stats_t {
