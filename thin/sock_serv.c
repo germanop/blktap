@@ -235,6 +235,7 @@ process_req(void * ap)
 		SIMPLEQ_INSERT_TAIL(&srv_head, req, entries);
 		pthread_mutex_unlock(&srv_mutex);
 	}
+	return NULL;
 }
 
 /*
