@@ -58,8 +58,12 @@ main(int argc, char *argv[]) {
 	struct payload buf;
 
 	/* pthread init section */
-	pthread_mutex_init(&req_mutex, NULL);
-	pthread_cond_init(&req_cond, NULL);
+	if (pthread_mutex_init(&srv_mutex, NULL) != 0)
+		return 1;
+	if (pthread_mutex_init(&req_mutex, NULL) != 0)
+		return 1;
+	if (pthread_cond_init(&req_cond, NULL) != 0)
+		return 1;
 	if (pthread_create(&worker, NULL, process_req, NULL)) {
 		printf("failed worker thread creation\n");
 		return 1;
