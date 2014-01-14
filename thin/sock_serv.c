@@ -23,9 +23,13 @@ static int increase_size(off64_t size, const char * path);
 static void parse_cmdline(int, char **);
 static int do_daemon(void);
 
-pthread_mutex_t req_mutex, srv_mutex;
-pthread_cond_t req_cond;
-SIMPLEQ_HEAD(sqhead, sq_entry) req_head, srv_head;
+pthread_mutex_t srv_mutex;
+SIMPLEQ_HEAD(sqhead, sq_entry) srv_head;
+struct kpr_queue {
+	struct sqhead qhead;
+	pthread_mutex_t mtx;
+	pthread_cond_t cnd;
+} *req_head;
 struct sq_entry {
 	struct payload data;
 	SIMPLEQ_ENTRY(sq_entry) entries;
@@ -35,8 +39,34 @@ static struct sq_entry * find_and_remove(struct sqhead *, pid_t);
 
 int daemonize;
 
+
+static struct kpr_queue *
+alloc_init_queue(void)
+{
+	struct kpr_queue *sqp;
+
+	sqp = malloc(sizeof(*sqp));
+	if (sqp) {
+		SIMPLEQ_INIT(&sqp->qhead);
+		if (pthread_mutex_init(&sqp->mtx, NULL) != 0)
+			goto out;
+		if (pthread_cond_init(&sqp->cnd, NULL) != 0)
+			goto out;
+	}
+	return sqp;
+
+	out:
+		free(sqp);
+		return NULL;
+}
+
 int
 main(int argc, char *argv[]) {
+
+	req_head = alloc_init_queue();
+	if(!req_head)
+		return 1;
+
 	daemonize = 0;
 
 	/* accept command line opts */
@@ -47,7 +77,6 @@ main(int argc, char *argv[]) {
 		return 1; /* can do better */
 
 	/* Init queues */
-	SIMPLEQ_INIT(&req_head);
 	SIMPLEQ_INIT(&srv_head);
 
 	pthread_t worker;
@@ -59,10 +88,6 @@ main(int argc, char *argv[]) {
 
 	/* pthread init section */
 	if (pthread_mutex_init(&srv_mutex, NULL) != 0)
-		return 1;
-	if (pthread_mutex_init(&req_mutex, NULL) != 0)
-		return 1;
-	if (pthread_cond_init(&req_cond, NULL) != 0)
 		return 1;
 	if (pthread_create(&worker, NULL, process_req, NULL)) {
 		printf("failed worker thread creation\n");
@@ -149,12 +174,12 @@ handle_request(struct payload * buf)
 	req = malloc(sizeof(struct sq_entry));
 	req->data = *buf;
 	buf->reply = PAYLOAD_ACCEPTED;
-	pthread_mutex_lock(&req_mutex);
+	pthread_mutex_lock(&req_head->mtx);
 	
-	SIMPLEQ_INSERT_TAIL(&req_head, req, entries);
+	SIMPLEQ_INSERT_TAIL(&req_head->qhead, req, entries);
 
-	pthread_cond_signal(&req_cond);
-	pthread_mutex_unlock(&req_mutex);
+	pthread_cond_signal(&req_head->cnd);
+	pthread_mutex_unlock(&req_head->mtx);
 
 	return 0;
 }
@@ -214,16 +239,16 @@ process_req(void * ap)
 	int ret;
 
 	for(;;) {
-		pthread_mutex_lock(&req_mutex);
+		pthread_mutex_lock(&req_head->mtx);
 
-		while (SIMPLEQ_EMPTY(&req_head)) {
-			pthread_cond_wait(&req_cond, &req_mutex);
+		while (SIMPLEQ_EMPTY(&req_head->qhead)) {
+			pthread_cond_wait(&req_head->cnd, &req_head->mtx);
 		}
 
 		/* pop from requests queue and unlock */
-		req = SIMPLEQ_FIRST(&req_head);
-		SIMPLEQ_REMOVE_HEAD(&req_head, entries);
-		pthread_mutex_unlock(&req_mutex);
+		req = SIMPLEQ_FIRST(&req_head->qhead);
+		SIMPLEQ_REMOVE_HEAD(&req_head->qhead, entries);
+		pthread_mutex_unlock(&req_head->mtx);
 
 		data = &req->data;
 		ret = increase_size(data->curr, data->path);
