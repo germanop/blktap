@@ -438,7 +438,7 @@ increase_size(off64_t size, const char * path) {
 	case -1:
 		return -1;
 	case 0: /* child */
-		execl("/usr/sbin/lvextend", "lvextend", ssize,
+		execl("/opt/xensource/sm/lvhdutil.py", "lvhdutil.py", "extend", ssize,
 		      path, (char *)NULL);
 		_exit(127); /* TBD */
 	default: /* parent */
