@@ -23,6 +23,7 @@ static int increase_size(off64_t size, const char * path);
 static void parse_cmdline(int, char **);
 static int do_daemon(void);
 
+/* queue structures */
 SIMPLEQ_HEAD(sqhead, sq_entry);
 struct kpr_queue {
 	struct sqhead qhead;
@@ -35,6 +36,13 @@ struct sq_entry {
 };
 
 static struct sq_entry * find_and_remove(struct sqhead *, pid_t);
+
+/* thread structures */
+struct kpr_thread_info {
+	pthread_t thr_id;
+	int thr_num;
+	struct kpr_queue *r_queue;
+};
 
 int daemonize;
 
@@ -79,17 +87,19 @@ main(int argc, char *argv[]) {
 	if (do_daemon() == -1)
 		return 1; /* can do better */
 
-	pthread_t worker;
+	/* prepare and spawn thread */
+	struct kpr_thread_info thr_info;
+	thr_info.r_queue = req_head;
+	if (pthread_create(&thr_info.thr_id, NULL, process_req, &thr_info)) {
+		printf("failed worker thread creation\n");
+		return 1;
+	}
+
 
 	struct sockaddr_un addr;
 	int sfd, cfd;
 	ssize_t numRead;
 	struct payload buf;
-
-	if (pthread_create(&worker, NULL, process_req, NULL)) {
-		printf("failed worker thread creation\n");
-		return 1;
-	}
 
 	req_reply = dummy_reply;
 
@@ -233,19 +243,28 @@ process_req(void * ap)
 {
 	struct sq_entry * req;
 	struct payload * data;
+	struct kpr_thread_info *thr_arg;
+	struct kpr_queue *r_queue;
 	int ret;
 
-	for(;;) {
-		pthread_mutex_lock(&req_head->mtx);
+	/* We must guarantee this structure is properly polulated or
+	   check it and fail in case it is not. In the latter case
+	   we need to check if the thread has returned.
+	*/
+	thr_arg = (struct kpr_thread_info *) ap;
+	r_queue = thr_arg->r_queue;
 
-		while (SIMPLEQ_EMPTY(&req_head->qhead)) {
-			pthread_cond_wait(&req_head->cnd, &req_head->mtx);
+	for(;;) {
+		pthread_mutex_lock(&r_queue->mtx);
+
+		while (SIMPLEQ_EMPTY(&r_queue->qhead)) {
+			pthread_cond_wait(&r_queue->cnd, &r_queue->mtx);
 		}
 
 		/* pop from requests queue and unlock */
-		req = SIMPLEQ_FIRST(&req_head->qhead);
-		SIMPLEQ_REMOVE_HEAD(&req_head->qhead, entries);
-		pthread_mutex_unlock(&req_head->mtx);
+		req = SIMPLEQ_FIRST(&r_queue->qhead);
+		SIMPLEQ_REMOVE_HEAD(&r_queue->qhead, entries);
+		pthread_mutex_unlock(&r_queue->mtx);
 
 		data = &req->data;
 		ret = increase_size(data->curr, data->path);
@@ -327,5 +346,5 @@ do_daemon()
 	if (!daemonize)
 		return 0;
 
-	return daemon(0, daemonize - 1); /* root dir and close if needed */	
+	return daemon(0, daemonize - 1); /* root dir and close if needed */
 }
