@@ -22,6 +22,10 @@ static void * process_req(void *);
 static int increase_size(off64_t size, const char * path);
 static void parse_cmdline(int, char **);
 static int do_daemon(void);
+static int handle_cli(struct payload *);
+static void split_command(char *, char **);
+static int add_vg(char *vg);
+static int del_vg(char *vg);
 
 /* queue structures */
 SIMPLEQ_HEAD(sqhead, sq_entry);
@@ -155,6 +159,9 @@ dummy_reply(int fd, struct payload * buf)
 	case PAYLOAD_QUERY:
 		handle_query(buf);
 		break;
+	case PAYLOAD_CLI:
+		handle_cli(buf);
+		break;
 	default:
 		buf->reply = PAYLOAD_UNDEF;
 		print_payload(buf);
@@ -217,6 +224,43 @@ handle_query(struct payload * buf)
 		pthread_mutex_unlock(&srv_head->mtx);
 		buf->reply = PAYLOAD_WAIT;		
 	}
+
+	return 0;
+}
+
+
+static int
+handle_cli(struct payload * buf)
+{
+	char command[PAYLOAD_MAX_PATH_LENGTH];
+	char *cmd[2];
+	int ret;
+
+	/* we reuse the path field for CLI */
+	strcpy(command, buf->path);
+
+	split_command(command, cmd);
+	if(!cmd[0])
+		return 1;
+
+	if (!strcmp("add", cmd[0])) {
+		if(!cmd[1])
+			return 1;
+		ret = add_vg(cmd[1]);
+		
+	}
+	else if (!strcmp("del", cmd[0])) {
+		if(!cmd[1])
+			return 1;
+		ret = del_vg(cmd[1]);
+	}
+	else
+		ret = 1;
+
+	if (ret)
+		strcpy(buf->path, "fail");
+	else
+		strcpy(buf->path, "ok");
 
 	return 0;
 }
@@ -347,4 +391,39 @@ do_daemon()
 		return 0;
 
 	return daemon(0, daemonize - 1); /* root dir and close if needed */
+}
+
+
+static void
+split_command(char *command, char **cmd_vec)
+{
+	char *token;
+	int i;
+
+	token = strtok(command, " ");
+	for(i = 0; token && (i < 2); ++i) {
+		cmd_vec[i] = token;
+		token = strtok(NULL, " ");
+	}
+
+	if (i < 2)
+		cmd_vec[1] = '\0';
+
+	return;
+}
+
+
+static int
+add_vg(char *vg)
+{
+	printf("CLI: add_vg\n");
+	return 0;
+}
+
+
+static int
+del_vg(char *vg)
+{
+	printf("CLI: del_vg\n");
+	return 0;
 }

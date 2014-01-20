@@ -61,6 +61,7 @@ make install DESTDIR=%{buildroot}
 %{_sbindir}/part-util
 %{_sbindir}/vhdpartx
 %{_sbindir}/thin-tapdisk
+%{_sbindir}/thin-cli
 %{_libexecdir}/tapdisk
 %{_sysconfdir}/udev/rules.d/blktap.rules
 %{_sysconfdir}/rc.d/init.d/tapback

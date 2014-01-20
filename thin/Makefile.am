@@ -10,6 +10,10 @@ sbin_PROGRAMS = thin-tapdisk
 thin_tapdisk_SOURCES = sock_serv.c
 thin_tapdisk_LDADD = libtapdiskthin.la
 
+sbin_PROGRAMS += thin-cli
+thin_cli_SOURCES = thin_cli.c
+thin_cli_LDADD = libtapdiskthin.la
+
 lib_LTLIBRARIES = libtapdiskthin.la
 
 libtapdiskthin_la_SOURCES = payload.c

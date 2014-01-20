@@ -15,6 +15,7 @@ typedef enum {
 	/* client */
 	PAYLOAD_QUERY,
 	PAYLOAD_REQUEST,
+	PAYLOAD_CLI,
 	/* generic */
 	PAYLOAD_UNDEF
 } payload_message_t;
