@@ -60,6 +60,8 @@ struct vg_entry {
 	LIST_ENTRY(vg_entry) entries;
 };
 
+static struct vg_entry * vg_pool_find(char *);
+
 
 int daemonize;
 
@@ -438,6 +440,12 @@ add_vg(char *vg)
 
 	printf("CLI: add_vg\n");
 
+	/* check we already have it */
+	if(vg_pool_find(vg)) {
+		printf("%s already added\n", vg);
+		return 0;
+	}
+
 	/* allocate and init vg_entry */
 	p_vg = malloc(sizeof(*p_vg));
 	if (!p_vg)
@@ -477,4 +485,32 @@ del_vg(char *vg)
 {
 	printf("CLI: del_vg\n");
 	return 0;
+}
+
+
+/**
+ * This function search the vg_pool for an entry with a given VG name.
+ * This function take cares of locking and unlocking, so do not call it
+ * with its mutex locked.
+ *
+ * @param vg_name name of the volume group to search for
+ * @return NULL if not in the pool or a pointer to the entry
+*/
+static struct vg_entry *
+vg_pool_find(char *vg_name)
+{
+	struct vg_entry *entry, *ret;
+	ret = NULL;
+
+	pthread_mutex_lock(&vg_pool.mtx);
+	LIST_FOREACH(entry, &vg_pool.head, entries) {
+		/* looking for exact match */
+		if (strcmp(entry->name, vg_name) == 0) {
+			ret = entry;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&vg_pool.mtx);
+
+	return ret;
 }
