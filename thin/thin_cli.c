@@ -28,8 +28,12 @@ main(int argc, char *argv[]) {
 				  longopts, &opt_idx)) != -1 && flag) {
 		switch(arg) {
 		case 0:
-			snprintf(message.path, PAYLOAD_MAX_PATH_LENGTH, "%s %s",
-				 longopts[opt_idx].name, optarg);
+			ret = snprintf(message.path, PAYLOAD_MAX_PATH_LENGTH,
+				       "%s %s", longopts[opt_idx].name, optarg);
+			if (ret >= PAYLOAD_MAX_PATH_LENGTH) {
+				fprintf(stderr, "input too long\n");
+				return 2;
+			}
 			flag = 0;
 			break;
 		case 'h':
