@@ -44,9 +44,22 @@ static struct sq_entry * find_and_remove(struct sqhead *, pid_t);
 /* thread structures */
 struct kpr_thread_info {
 	pthread_t thr_id;
-	int thr_num;
 	struct kpr_queue *r_queue;
 };
+
+/* list structures */
+LIST_HEAD(vg_list_head, vg_entry);
+struct kpr_vg_list {
+	struct vg_list_head head;
+	pthread_mutex_t mtx;
+} vg_pool;
+struct vg_entry {
+	char name[PAYLOAD_MAX_PATH_LENGTH];
+	struct kpr_thread_info thr;
+	struct kpr_queue *r_queue;
+	LIST_ENTRY(vg_entry) entries;
+};
+
 
 int daemonize;
 
@@ -73,6 +86,11 @@ alloc_init_queue(void)
 
 int
 main(int argc, char *argv[]) {
+
+	/* Init pool */
+	LIST_INIT(&vg_pool.head);
+	if (pthread_mutex_init(&vg_pool.mtx, NULL) != 0)
+		return 1;	
 
 	req_head = alloc_init_queue();
 	if(!req_head)
@@ -416,8 +434,41 @@ split_command(char *command, char **cmd_vec)
 static int
 add_vg(char *vg)
 {
+	struct vg_entry *p_vg;
+
 	printf("CLI: add_vg\n");
+
+	/* allocate and init vg_entry */
+	p_vg = malloc(sizeof(*p_vg));
+	if (!p_vg)
+		return 1;
+
+	/* We rely on CLI to avoid truncated name or non-NULL terminated
+	   strings. Moreover, by dest is not smaller then src */
+	strcpy(p_vg->name, vg);
+
+	/* VG and thread specific thread allocated */
+	p_vg->r_queue = alloc_init_queue();
+	if(!p_vg->r_queue)
+		goto out;
+
+	/* Prepare and start VG specific thread */
+	p_vg->thr.r_queue = p_vg->r_queue;
+	if (pthread_create(&p_vg->thr.thr_id, NULL, process_req, &p_vg->thr)) {
+		fprintf(stderr, "Failed worker thread creation for %s\n",
+			p_vg->name);
+		goto out2;
+	}
+
+	/* Everything ok. Add vg to pool */
+	LIST_INSERT_HEAD(&vg_pool.head, p_vg, entries);
+
 	return 0;
+out2:
+	free(p_vg->r_queue);
+out:
+	free(p_vg);
+	return 1;
 }
 
 
