@@ -34,7 +34,7 @@ struct kpr_queue {
 	struct sqhead qhead;
 	pthread_mutex_t mtx;
 	pthread_cond_t cnd;
-} *req_head, *srv_head;
+} *def_in_queue, *out_queue;
 struct sq_entry {
 	struct payload data;
 	SIMPLEQ_ENTRY(sq_entry) entries;
@@ -96,12 +96,12 @@ main(int argc, char *argv[]) {
 	if (pthread_mutex_init(&vg_pool.mtx, NULL) != 0)
 		return 1;	
 
-	req_head = alloc_init_queue();
-	if(!req_head)
+	/* Init default queues */
+	def_in_queue = alloc_init_queue();
+	if(!def_in_queue)
 		return 1; /*no free: return from main */
-
-	srv_head = alloc_init_queue();
-	if(!srv_head)
+	out_queue = alloc_init_queue();
+	if(!out_queue)
 		return 1; /*no free: return from main */
 
 	daemonize = 0;
@@ -115,7 +115,7 @@ main(int argc, char *argv[]) {
 
 	/* prepare and spawn thread */
 	struct kpr_thread_info thr_info;
-	thr_info.r_queue = req_head;
+	thr_info.r_queue = def_in_queue;
 	if (pthread_create(&thr_info.thr_id, NULL, process_req, &thr_info)) {
 		printf("failed worker thread creation\n");
 		return 1;
@@ -210,12 +210,12 @@ handle_request(struct payload * buf)
 	req = malloc(sizeof(struct sq_entry));
 	req->data = *buf;
 	buf->reply = PAYLOAD_ACCEPTED;
-	pthread_mutex_lock(&req_head->mtx);
+	pthread_mutex_lock(&def_in_queue->mtx);
 	
-	SIMPLEQ_INSERT_TAIL(&req_head->qhead, req, entries);
+	SIMPLEQ_INSERT_TAIL(&def_in_queue->qhead, req, entries);
 
-	pthread_cond_signal(&req_head->cnd);
-	pthread_mutex_unlock(&req_head->mtx);
+	pthread_cond_signal(&def_in_queue->cnd);
+	pthread_mutex_unlock(&def_in_queue->mtx);
 
 	return 0;
 }
@@ -229,21 +229,21 @@ handle_query(struct payload * buf)
 		return 1;
 
 	/* Check we have something ready */
-	pthread_mutex_lock(&srv_head->mtx);
-	if (SIMPLEQ_EMPTY(&srv_head->qhead)) {
-		pthread_mutex_unlock(&srv_head->mtx);
+	pthread_mutex_lock(&out_queue->mtx);
+	if (SIMPLEQ_EMPTY(&out_queue->qhead)) {
+		pthread_mutex_unlock(&out_queue->mtx);
 		buf->reply = PAYLOAD_WAIT;
 		return 0;
 	}
 
 	/* check if we have a served request for this query */
-	req = find_and_remove(&srv_head->qhead, buf->id);
+	req = find_and_remove(&out_queue->qhead, buf->id);
 	if (req) {
-		pthread_mutex_unlock(&srv_head->mtx);
+		pthread_mutex_unlock(&out_queue->mtx);
 		buf->reply = req->data.reply;
 		free(req);
 	} else { /* wait */
-		pthread_mutex_unlock(&srv_head->mtx);
+		pthread_mutex_unlock(&out_queue->mtx);
 		buf->reply = PAYLOAD_WAIT;		
 	}
 
@@ -351,9 +351,9 @@ process_req(void * ap)
 		       (unsigned)data->id, data->path, ret);
 
 		/* push to served queue */
-		pthread_mutex_lock(&srv_head->mtx);
-		SIMPLEQ_INSERT_TAIL(&srv_head->qhead, req, entries);
-		pthread_mutex_unlock(&srv_head->mtx);
+		pthread_mutex_lock(&out_queue->mtx);
+		SIMPLEQ_INSERT_TAIL(&out_queue->qhead, req, entries);
+		pthread_mutex_unlock(&out_queue->mtx);
 	}
 	return NULL;
 }
