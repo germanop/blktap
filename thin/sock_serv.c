@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <sys/queue.h> /* non POSIX */
+#include <stdbool.h>
 #include "blktap.h"
 #include "payload.h"
 
@@ -60,7 +61,8 @@ struct vg_entry {
 	LIST_ENTRY(vg_entry) entries;
 };
 
-static struct vg_entry * vg_pool_find(char *);
+static struct vg_entry * vg_pool_find(char *, bool);
+static struct vg_entry * vg_pool_find_and_remove(char *);
 
 
 int daemonize;
@@ -331,6 +333,15 @@ process_req(void * ap)
 		pthread_mutex_unlock(&r_queue->mtx);
 
 		data = &req->data;
+		/* For the time being we use PAYLOAD_UNDEF as a way
+		   to notify threads to exit
+		*/
+		if (data->reply == PAYLOAD_UNDEF) {
+			fprintf(stderr, "Thread cancellation received\n");
+			return NULL;
+		}
+
+		/* Fulfil request */
 		ret = increase_size(data->curr, data->path);
 		if (ret == 0 || ret == 3) /* 3 means big enough */
 			data->reply = PAYLOAD_DONE;
@@ -441,7 +452,7 @@ add_vg(char *vg)
 	printf("CLI: add_vg\n");
 
 	/* check we already have it */
-	if(vg_pool_find(vg)) {
+	if(vg_pool_find(vg, true)) {
 		printf("%s already added\n", vg);
 		return 0;
 	}
@@ -483,26 +494,77 @@ out:
 static int
 del_vg(char *vg)
 {
+	struct vg_entry *p_vg;
+	struct sq_entry *req;
+	int ret;
+
 	printf("CLI: del_vg\n");
+
+	/* Once removed from the pool no new requests can be served
+	   any more
+	*/
+	p_vg = vg_pool_find_and_remove(vg);
+	if(!p_vg) {
+		fprintf(stderr, "Nothing removed\n");
+		return 1;
+	}
+
+	/* The thread is still able to crunch requests in its queue
+	   so we "poison" the queue to stop the thread
+	 */
+	req = malloc(sizeof(*req));
+	if(!req) {
+		/* FIXME: we are going to return but the vg is no more in the
+		 pool while the thread is still running.
+		 We are returning with a runnig thread, not able to receive new
+		 requests and 2 memory leaks..
+		*/
+		fprintf(stderr, "Error with malloc!! Thread still running\n"
+			"and memory leaked\n");
+		return 1;
+	}
+	init_payload(&req->data);
+	req->data.reply = PAYLOAD_UNDEF;
+	/* Insert in queue */
+	pthread_mutex_lock(&p_vg->r_queue->mtx);
+	SIMPLEQ_INSERT_TAIL(&p_vg->r_queue->qhead, req, entries);
+	pthread_cond_signal(&p_vg->r_queue->cnd); /* Wake thread if needed */
+	pthread_mutex_unlock(&p_vg->r_queue->mtx);
+
+	/* Wait for thread to complete */
+	ret = pthread_join(p_vg->thr.thr_id, NULL);
+	if (ret != 0)
+		fprintf(stderr, "Problem joining thread..FIXME\n");
+
+	/*
+	 * Thread is dead, let's free resources
+	 */
+	/* By design the queue must be empty but we check */
+	if (!SIMPLEQ_EMPTY(&p_vg->r_queue->qhead))
+		fprintf(stderr, "queue not empty, memory leak! FIXME\n");
+	free(p_vg->r_queue);
+	free(p_vg);
+
 	return 0;
 }
 
 
 /**
- * This function search the vg_pool for an entry with a given VG name.
- * This function take cares of locking and unlocking, so do not call it
- * with its mutex locked.
+ * This function searches the vg_pool for an entry with a given VG name.
+ * If invoked with locking no mutexes must be hold
  *
  * @param vg_name name of the volume group to search for
+ * @param lock ask for function to take care of locking
  * @return NULL if not in the pool or a pointer to the entry
 */
 static struct vg_entry *
-vg_pool_find(char *vg_name)
+vg_pool_find(char *vg_name, bool lock)
 {
 	struct vg_entry *entry, *ret;
 	ret = NULL;
 
-	pthread_mutex_lock(&vg_pool.mtx);
+	if(lock)
+		pthread_mutex_lock(&vg_pool.mtx);
 	LIST_FOREACH(entry, &vg_pool.head, entries) {
 		/* looking for exact match */
 		if (strcmp(entry->name, vg_name) == 0) {
@@ -510,7 +572,32 @@ vg_pool_find(char *vg_name)
 			break;
 		}
 	}
-	pthread_mutex_unlock(&vg_pool.mtx);
+	if(lock)
+		pthread_mutex_unlock(&vg_pool.mtx);
 
 	return ret;
+}
+
+
+/**
+ * This function removes from vg_pool the entry named vg_name.
+ * The pool lock is automatic so make sure you are not holding
+ * any mutex
+ *
+ * @param vg_name name of the volume group to remove
+ * @return NULL if nothing is removed or a pointer to removed item
+*/
+static struct vg_entry *
+vg_pool_find_and_remove(char *vg_name)
+{
+	struct vg_entry *entry;
+
+	pthread_mutex_lock(&vg_pool.mtx);
+	entry = vg_pool_find(vg_name, false);
+	if(!entry)
+		return NULL;
+	LIST_REMOVE(entry, entries);
+	pthread_mutex_unlock(&vg_pool.mtx);
+
+	return entry;
 }
