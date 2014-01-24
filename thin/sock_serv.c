@@ -11,12 +11,12 @@
 #include <stdbool.h>
 #include "blktap.h"
 #include "payload.h"
+#include "kpr_util.h"
 
 #define BACKLOG 5
 
 static inline int process_payload(int, struct payload *);
-static inline int dummy_reply(int, struct payload *);
-static int (*req_reply)(int , struct payload * );
+static inline int req_reply(int, struct payload *);
 static int handle_request(struct payload * buf);
 static int handle_query(struct payload * buf);
 static void * process_req(void *);
@@ -127,8 +127,6 @@ main(int argc, char *argv[]) {
 	ssize_t numRead;
 	struct payload buf;
 
-	req_reply = dummy_reply;
-
 	sfd = socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0);
 	if (sfd == -1)
 		return -errno;
@@ -167,12 +165,14 @@ process_payload(int fd, struct payload * buf)
 
 	print_payload(buf);
 	err = req_reply(fd, buf);
+	print_payload(buf);
+	printf("EOM\n\n");
 
 	return err;
 }
 
 static int
-dummy_reply(int fd, struct payload * buf)
+req_reply(int fd, struct payload * buf)
 {
 	switch (buf->reply) {
 	case PAYLOAD_REQUEST:
@@ -188,8 +188,6 @@ dummy_reply(int fd, struct payload * buf)
 		buf->reply = PAYLOAD_UNDEF;
 		print_payload(buf);
 	}
-	print_payload(buf);
-	printf("EOM\n\n");
 
 	/* TBD: very basic write, need a while loop */
 	if (write(fd, buf, sizeof(*buf)) != sizeof(*buf))
@@ -201,21 +199,34 @@ dummy_reply(int fd, struct payload * buf)
 static int
 handle_request(struct payload * buf)
 {
-	struct sq_entry * req;
+	struct sq_entry *req;
+	struct vg_entry *vgentry;
+	struct kpr_queue *in_queue;
+	char vgname[PAYLOAD_MAX_PATH_LENGTH];
+	char lvname[PAYLOAD_MAX_PATH_LENGTH];
 
-	if (buf->reply != PAYLOAD_REQUEST)
+	if( kpr_split_lvm_path(buf->path, vgname, lvname) )
 		return 1;
 
-	printf("I promise I will do something about it..\n");
+	/* search we have a queue for it */
+	vgentry = vg_pool_find(vgname, true);
+	if (vgentry) /* we do */
+		in_queue = vgentry->r_queue; /* no lock (sure?) */
+	else /* default */
+		in_queue = def_in_queue;
+
 	req = malloc(sizeof(struct sq_entry));
+	if(!req)
+		return 1;
+
 	req->data = *buf;
 	buf->reply = PAYLOAD_ACCEPTED;
-	pthread_mutex_lock(&def_in_queue->mtx);
+	pthread_mutex_lock(&in_queue->mtx);
 	
-	SIMPLEQ_INSERT_TAIL(&def_in_queue->qhead, req, entries);
+	SIMPLEQ_INSERT_TAIL(&in_queue->qhead, req, entries);
 
-	pthread_cond_signal(&def_in_queue->cnd);
-	pthread_mutex_unlock(&def_in_queue->mtx);
+	pthread_cond_signal(&in_queue->cnd);
+	pthread_mutex_unlock(&in_queue->mtx);
 
 	return 0;
 }
@@ -224,9 +235,6 @@ static int
 handle_query(struct payload * buf)
 {
 	struct sq_entry * req;
-
-	if (buf->reply != PAYLOAD_QUERY)
-		return 1;
 
 	/* Check we have something ready */
 	pthread_mutex_lock(&out_queue->mtx);
