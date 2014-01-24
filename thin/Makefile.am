@@ -18,6 +18,7 @@ lib_LTLIBRARIES = libtapdiskthin.la
 
 libtapdiskthin_la_SOURCES = payload.c
 libtapdiskthin_la_SOURCES += sock_client2.c
+libtapdiskthin_la_SOURCES += kpr_util.c
 
 libtapdiskthin_la_LDFLAGS = -version-info 1:1:1
 
