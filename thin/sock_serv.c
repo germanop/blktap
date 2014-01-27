@@ -20,6 +20,7 @@ static inline int req_reply(int, struct payload *);
 static int handle_request(struct payload * buf);
 static int handle_query(struct payload * buf);
 static void * process_req(void *);
+static void * reject_thread(void *);
 static int increase_size(off64_t size, const char * path);
 static void parse_cmdline(int, char **);
 static int do_daemon(void);
@@ -113,10 +114,10 @@ main(int argc, char *argv[]) {
 	if (do_daemon() == -1)
 		return 1; /* can do better */
 
-	/* prepare and spawn thread */
-	struct kpr_thread_info thr_info;
-	thr_info.r_queue = def_in_queue;
-	if (pthread_create(&thr_info.thr_id, NULL, process_req, &thr_info)) {
+	/* prepare and spawn default thread */
+	struct kpr_thread_info def_thr_info;
+	def_thr_info.r_queue = def_in_queue;
+	if (pthread_create(&def_thr_info.thr_id, NULL, reject_thread, &def_thr_info)) {
 		printf("failed worker thread creation\n");
 		return 1;
 	}
@@ -365,6 +366,56 @@ process_req(void * ap)
 	}
 	return NULL;
 }
+
+
+static void *
+reject_thread(void * ap)
+{
+	struct sq_entry * req;
+	struct payload * data;
+	struct kpr_thread_info *thr_arg;
+	struct kpr_queue *r_queue;
+
+	/* We must guarantee this structure is properly polulated or
+	   check it and fail in case it is not. In the latter case
+	   we need to check if the thread has returned.
+	*/
+	thr_arg = (struct kpr_thread_info *) ap;
+	r_queue = thr_arg->r_queue;
+
+	for(;;) {
+		pthread_mutex_lock(&r_queue->mtx);
+
+		while (SIMPLEQ_EMPTY(&r_queue->qhead)) {
+			pthread_cond_wait(&r_queue->cnd, &r_queue->mtx);
+		}
+
+		/* pop from requests queue and unlock */
+		req = SIMPLEQ_FIRST(&r_queue->qhead);
+		SIMPLEQ_REMOVE_HEAD(&r_queue->qhead, entries);
+		pthread_mutex_unlock(&r_queue->mtx);
+
+		data = &req->data;
+		/* For the time being we use PAYLOAD_UNDEF as a way
+		   to notify threads to exit
+		*/
+		if (data->reply == PAYLOAD_UNDEF) {
+			fprintf(stderr, "Thread cancellation received\n");
+			return NULL;
+		}
+
+		/* Reject request */
+		data->reply = PAYLOAD_REJECTED;
+		printf("default_thread: No registered VG!\n\n");
+
+		/* push to served queue */
+		pthread_mutex_lock(&out_queue->mtx);
+		SIMPLEQ_INSERT_TAIL(&out_queue->qhead, req, entries);
+		pthread_mutex_unlock(&out_queue->mtx);
+	}
+	return NULL;
+}
+
 
 /*
  * @size: current size to increase in bytes
