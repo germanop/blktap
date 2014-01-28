@@ -18,9 +18,6 @@ main(int argc, char *argv[]) {
 		{ 0, 0, 0, 0 }
 	};
 
-	init_payload(&message);
-	message.reply = PAYLOAD_CLI;
-
 	/* We expect at least one valid option and, if more, the others
 	   are discarded
 	*/
@@ -51,7 +48,14 @@ main(int argc, char *argv[]) {
 		return 1;
 	}
 
+	init_payload(&message);
+	message.reply = PAYLOAD_CLI;
+
 	ret = thin_sock_comm(&message);
+	if(ret) {
+	  fprintf(stderr, "socket error (%d)\n", ret);
+	  return 1;
+	}
 	printf("message: %s\n", message.path);
 
 	return 0;
