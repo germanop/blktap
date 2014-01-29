@@ -19,8 +19,9 @@ static inline int process_payload(int, struct payload *);
 static inline int req_reply(int, struct payload *);
 static int handle_request(struct payload * buf);
 static int handle_query(struct payload * buf);
-static void * process_req(void *);
-static void * reject_thread(void *);
+static void * worker_thread(void *);
+static void slave_worker_hook(struct payload *);
+static void reject_hook(struct payload *);
 static int increase_size(off64_t size, const char * path);
 static void parse_cmdline(int, char **);
 static int do_daemon(void);
@@ -47,6 +48,7 @@ static struct sq_entry * find_and_remove(struct sqhead *, pid_t);
 struct kpr_thread_info {
 	pthread_t thr_id;
 	struct kpr_queue *r_queue;
+	void (*hook)(struct payload *);
 };
 
 /* list structures */
@@ -117,7 +119,8 @@ main(int argc, char *argv[]) {
 	/* prepare and spawn default thread */
 	struct kpr_thread_info def_thr_info;
 	def_thr_info.r_queue = def_in_queue;
-	if (pthread_create(&def_thr_info.thr_id, NULL, reject_thread, &def_thr_info)) {
+	def_thr_info.hook = reject_hook;
+	if (pthread_create(&def_thr_info.thr_id, NULL, worker_thread, &def_thr_info)) {
 		printf("failed worker thread creation\n");
 		return 1;
 	}
@@ -314,13 +317,13 @@ find_and_remove(struct sqhead * head, pid_t id)
 
 
 static void *
-process_req(void * ap)
+worker_thread(void * ap)
 {
 	struct sq_entry * req;
 	struct payload * data;
 	struct kpr_thread_info *thr_arg;
 	struct kpr_queue *r_queue;
-	int ret;
+	void (*hook)(struct payload *);
 
 	/* We must guarantee this structure is properly polulated or
 	   check it and fail in case it is not. In the latter case
@@ -328,6 +331,7 @@ process_req(void * ap)
 	*/
 	thr_arg = (struct kpr_thread_info *) ap;
 	r_queue = thr_arg->r_queue;
+	hook = thr_arg->hook;
 
 	for(;;) {
 		pthread_mutex_lock(&r_queue->mtx);
@@ -350,14 +354,8 @@ process_req(void * ap)
 			return NULL;
 		}
 
-		/* Fulfil request */
-		ret = increase_size(data->curr, data->path);
-		if (ret == 0 || ret == 3) /* 3 means big enough */
-			data->reply = PAYLOAD_DONE;
-		else
-			data->reply = PAYLOAD_REJECTED;
-		printf("worker_thread: completed %u %s (%d)\n\n",
-		       (unsigned)data->id, data->path, ret);
+		/* Execute worker-thread specific hook */
+		hook(data);
 
 		/* push to served queue */
 		pthread_mutex_lock(&out_queue->mtx);
@@ -368,52 +366,28 @@ process_req(void * ap)
 }
 
 
-static void *
-reject_thread(void * ap)
+static void
+slave_worker_hook(struct payload *data)
 {
-	struct sq_entry * req;
-	struct payload * data;
-	struct kpr_thread_info *thr_arg;
-	struct kpr_queue *r_queue;
+	int ret;
 
-	/* We must guarantee this structure is properly polulated or
-	   check it and fail in case it is not. In the latter case
-	   we need to check if the thread has returned.
-	*/
-	thr_arg = (struct kpr_thread_info *) ap;
-	r_queue = thr_arg->r_queue;
-
-	for(;;) {
-		pthread_mutex_lock(&r_queue->mtx);
-
-		while (SIMPLEQ_EMPTY(&r_queue->qhead)) {
-			pthread_cond_wait(&r_queue->cnd, &r_queue->mtx);
-		}
-
-		/* pop from requests queue and unlock */
-		req = SIMPLEQ_FIRST(&r_queue->qhead);
-		SIMPLEQ_REMOVE_HEAD(&r_queue->qhead, entries);
-		pthread_mutex_unlock(&r_queue->mtx);
-
-		data = &req->data;
-		/* For the time being we use PAYLOAD_UNDEF as a way
-		   to notify threads to exit
-		*/
-		if (data->reply == PAYLOAD_UNDEF) {
-			fprintf(stderr, "Thread cancellation received\n");
-			return NULL;
-		}
-
-		/* Reject request */
+	/* Fulfil request */
+	ret = increase_size(data->curr, data->path);
+	if (ret == 0 || ret == 3) /* 3 means big enough */
+		data->reply = PAYLOAD_DONE;
+	else
 		data->reply = PAYLOAD_REJECTED;
-		printf("default_thread: No registered VG!\n\n");
+	printf("worker_thread: completed %u %s (%d)\n\n",
+	       (unsigned)data->id, data->path, ret);
+}
 
-		/* push to served queue */
-		pthread_mutex_lock(&out_queue->mtx);
-		SIMPLEQ_INSERT_TAIL(&out_queue->qhead, req, entries);
-		pthread_mutex_unlock(&out_queue->mtx);
-	}
-	return NULL;
+
+static void
+reject_hook(struct payload *data)
+{
+	/* Reject request */
+	data->reply = PAYLOAD_REJECTED;
+	printf("default_thread: No registered VG!\n\n");
 }
 
 
@@ -532,7 +506,8 @@ add_vg(char *vg)
 
 	/* Prepare and start VG specific thread */
 	p_vg->thr.r_queue = p_vg->r_queue;
-	if (pthread_create(&p_vg->thr.thr_id, NULL, process_req, &p_vg->thr)) {
+	p_vg->thr.hook = slave_worker_hook;
+	if (pthread_create(&p_vg->thr.thr_id, NULL, worker_thread, &p_vg->thr)) {
 		fprintf(stderr, "Failed worker thread creation for %s\n",
 			p_vg->name);
 		goto out2;
@@ -660,3 +635,5 @@ vg_pool_find_and_remove(char *vg_name)
 
 	return entry;
 }
+
+
