@@ -461,7 +461,10 @@ thin_parse_reply(const struct payload * buf, struct vhd_state *s, int * query)
 		break;
 	case PAYLOAD_WAIT:
 		break; /* just keep asking */
-	default: /* for now treat DONE and REJ the same */
+	case PAYLOAD_REJECTED:
+		*query = 0; /* can make new requests if necessary */
+		break;
+	default: /* It should be only DONE but to be safe..*/
 		*query = 0; /* we cannot query any more, it has been served */
 		vhd_thin_prepare(s);
 	}
@@ -485,7 +488,6 @@ update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 	if (notify && !thin_prepare_req(s, &message, next_db, query)) {
 		/* socket message block */
 		err = thin_sock_comm(&message);
-		query = 1; /* from now on just ask */
 		if (err)
 			DBG(TLOG_WARN, "socket returned: %d\n", err);
 		err = thin_parse_reply(&message, s, &query);
