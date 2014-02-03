@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <sys/queue.h> /* non POSIX */
+#include <sys/eventfd.h> /* non POSIX */
+#include <poll.h>
 #include <stdbool.h>
 #include "blktap.h"
 #include "payload.h"
@@ -20,6 +22,7 @@ static inline int req_reply(int, struct payload *);
 static int handle_request(struct payload * buf);
 static int handle_query(struct payload * buf);
 static void * worker_thread(void *);
+static void * worker_thread_net(void *);
 static void slave_worker_hook(struct payload *);
 static void reject_hook(struct payload *);
 static int increase_size(off64_t size, const char * path);
@@ -36,6 +39,7 @@ struct kpr_queue {
 	struct sqhead qhead;
 	pthread_mutex_t mtx;
 	pthread_cond_t cnd;
+	int efd; /* some queues are notified by eventfd */
 } *def_in_queue, *out_queue;
 struct sq_entry {
 	struct payload data;
@@ -83,6 +87,9 @@ alloc_init_queue(void)
 			goto out;
 		if (pthread_cond_init(&sqp->cnd, NULL) != 0)
 			goto out;
+		if ( (sqp->efd = eventfd(0, EFD_CLOEXEC|EFD_NONBLOCK|
+				    EFD_SEMAPHORE)) == -1 )
+			goto out;
 	}
 	return sqp;
 
@@ -120,7 +127,7 @@ main(int argc, char *argv[]) {
 	struct kpr_thread_info def_thr_info;
 	def_thr_info.r_queue = def_in_queue;
 	def_thr_info.hook = reject_hook;
-	if (pthread_create(&def_thr_info.thr_id, NULL, worker_thread, &def_thr_info)) {
+	if (pthread_create(&def_thr_info.thr_id, NULL, worker_thread_net, &def_thr_info)) {
 		printf("failed worker thread creation\n");
 		return 1;
 	}
@@ -229,7 +236,11 @@ handle_request(struct payload * buf)
 	
 	SIMPLEQ_INSERT_TAIL(&in_queue->qhead, req, entries);
 
-	pthread_cond_signal(&in_queue->cnd);
+	/* Temporary hack for the new event mechanism used by default queue */
+	if ( in_queue == def_in_queue )
+		eventfd_write(in_queue->efd, 1);
+	else
+		pthread_cond_signal(&in_queue->cnd);
 	pthread_mutex_unlock(&in_queue->mtx);
 
 	return 0;
@@ -343,6 +354,74 @@ worker_thread(void * ap)
 		/* pop from requests queue and unlock */
 		req = SIMPLEQ_FIRST(&r_queue->qhead);
 		SIMPLEQ_REMOVE_HEAD(&r_queue->qhead, entries);
+		pthread_mutex_unlock(&r_queue->mtx);
+
+		data = &req->data;
+		/* For the time being we use PAYLOAD_UNDEF as a way
+		   to notify threads to exit
+		*/
+		if (data->reply == PAYLOAD_UNDEF) {
+			fprintf(stderr, "Thread cancellation received\n");
+			return NULL;
+		}
+
+		/* Execute worker-thread specific hook */
+		hook(data);
+
+		/* push to served queue */
+		pthread_mutex_lock(&out_queue->mtx);
+		SIMPLEQ_INSERT_TAIL(&out_queue->qhead, req, entries);
+		pthread_mutex_unlock(&out_queue->mtx);
+	}
+	return NULL;
+}
+
+
+static void *
+worker_thread_net(void * ap)
+{
+	struct sq_entry * req;
+	struct payload * data;
+	struct kpr_thread_info *thr_arg;
+	struct kpr_queue *r_queue;
+	struct pollfd fds[1];
+	void (*hook)(struct payload *);
+	uint64_t ebuf;
+	int ret;
+
+	/* We must guarantee this structure is properly polulated or
+	   check it and fail in case it is not. In the latter case
+	   we need to check if the thread has returned.
+	*/
+	thr_arg = (struct kpr_thread_info *) ap;
+	r_queue = thr_arg->r_queue;
+	hook = thr_arg->hook;
+	/* register events for poll */
+	fds[0].fd = r_queue->efd;
+	fds[0].events = POLLIN;
+
+	for(;;) {
+		ret = poll(fds, 1, -1); /* wait for ever */
+		if ( ret < 1 ) { /* 0 not expected */
+			fprintf(stderr, "poll returned %d\n", ret);
+			continue;
+		}
+
+		/*
+		 * So far only the queue could have woken us up
+		 */
+		pthread_mutex_lock(&r_queue->mtx);
+		/* We do not expect others to empty the queue but.. */
+		if (SIMPLEQ_EMPTY(&r_queue->qhead)) {
+			pthread_mutex_unlock(&r_queue->mtx);
+			continue;
+		}
+
+		/* pop from requests queue and unlock */
+		req = SIMPLEQ_FIRST(&r_queue->qhead);
+		SIMPLEQ_REMOVE_HEAD(&r_queue->qhead, entries);
+		/* notify back we read one el of the queue */
+		eventfd_read(r_queue->efd, &ebuf);
 		pthread_mutex_unlock(&r_queue->mtx);
 
 		data = &req->data;
