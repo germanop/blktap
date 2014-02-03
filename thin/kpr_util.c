@@ -1,8 +1,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #define PFX_SIZE 5
+#define TCP_BACKLOG 10
+
 
 /**
  * This function parse the given path and populate the other char arrays
@@ -64,4 +69,46 @@ kpr_split_lvm_path(const char * path, char * vg, char * lv)
 	*lv = '\0'; /* terminate string */
 
 	return flag ? 0 : 1;
+}
+
+
+/**
+ * Create, bind and listen to specified socket
+ *
+ * @param[in] port number
+ * @return file descriptor of socket or 0
+ */
+int
+kpr_tcp_create(uint16_t port)
+{
+	int sfd;
+	struct sockaddr_in s_addr;
+
+	/* create tcp socket */
+	sfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (sfd == -1) {
+		fprintf(stderr, "tcp socket error");
+		return 0;
+	}
+
+	/* Build socket address, bind and listen */
+	memset(&s_addr, 0, sizeof(s_addr));
+	s_addr.sin_family = AF_INET;
+	s_addr.sin_port = htons(port);
+	s_addr.sin_addr.s_addr = INADDR_ANY;
+
+	if (bind(sfd, (struct sockaddr *) &s_addr, sizeof(s_addr)) == -1) {
+		fprintf(stderr, "bind error");
+		goto fail;
+	}
+
+	if (listen(sfd, TCP_BACKLOG) == -1) {
+		fprintf(stderr, "listen error");
+		goto fail;
+	}
+
+	return sfd;
+fail:
+	close(sfd);
+	return 0;
 }

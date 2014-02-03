@@ -10,7 +10,6 @@
 #include <sys/queue.h> /* non POSIX */
 #include <sys/eventfd.h> /* non POSIX */
 #include <poll.h>
-#include <netinet/in.h>
 #include <stdbool.h>
 #include "blktap.h"
 #include "payload.h"
@@ -392,7 +391,6 @@ worker_thread_net(void * ap)
 
 #define PORT_NO 7777
 #define BSIZE 64
-	struct sockaddr_in s_addr;
 	int sfd, cfd;
 	char buf[BSIZE];
 
@@ -407,32 +405,10 @@ worker_thread_net(void * ap)
 	r_queue = thr_arg->r_queue;
 	hook = thr_arg->hook;
 
-	/* create tcp socket */
-	sfd = socket(AF_INET, SOCK_STREAM, 0);
-	if (sfd == -1) {
-		fprintf(stderr, "socket error");
+	/* create tcp socket and listen */
+	sfd = kpr_tcp_create(PORT_NO);
+	if (!sfd)
 		return NULL;
-	}
-
-	/* Construct server socket address, bind socket to it,
-	   and make this a listening socket */
-
-	memset(&s_addr, 0, sizeof(s_addr));
-	s_addr.sin_family = AF_INET;
-	s_addr.sin_port = htons(PORT_NO);
-	s_addr.sin_addr.s_addr = INADDR_ANY;
-
-	if (bind(sfd, (struct sockaddr *) &s_addr, sizeof(s_addr)) == -1) {
-		fprintf(stderr, "bind error");
-		close(sfd);
-		return NULL;
-	}
-
-	if (listen(sfd, BACKLOG) == -1) {
-		fprintf(stderr, "listen error");
-		close(sfd);
-		return NULL;
-	}
 
 	/* register events for poll */
 	fds[0].fd = r_queue->efd;
