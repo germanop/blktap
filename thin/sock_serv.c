@@ -10,6 +10,7 @@
 #include <sys/queue.h> /* non POSIX */
 #include <sys/eventfd.h> /* non POSIX */
 #include <poll.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include "blktap.h"
 #include "payload.h"
@@ -384,8 +385,17 @@ worker_thread_net(void * ap)
 	struct payload * data;
 	struct kpr_thread_info *thr_arg;
 	struct kpr_queue *r_queue;
-	struct pollfd fds[1];
+
+	struct pollfd fds[2];
+	int i;
 	void (*hook)(struct payload *);
+
+#define PORT_NO 7777
+#define BSIZE 64
+	struct sockaddr_in s_addr;
+	int sfd, cfd;
+	char buf[BSIZE];
+
 	uint64_t ebuf;
 	int ret;
 
@@ -396,50 +406,98 @@ worker_thread_net(void * ap)
 	thr_arg = (struct kpr_thread_info *) ap;
 	r_queue = thr_arg->r_queue;
 	hook = thr_arg->hook;
+
+	/* create tcp socket */
+	sfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (sfd == -1) {
+		fprintf(stderr, "socket error");
+		return NULL;
+	}
+
+	/* Construct server socket address, bind socket to it,
+	   and make this a listening socket */
+
+	memset(&s_addr, 0, sizeof(s_addr));
+	s_addr.sin_family = AF_INET;
+	s_addr.sin_port = htons(PORT_NO);
+	s_addr.sin_addr.s_addr = INADDR_ANY;
+
+	if (bind(sfd, (struct sockaddr *) &s_addr, sizeof(s_addr)) == -1) {
+		fprintf(stderr, "bind error");
+		close(sfd);
+		return NULL;
+	}
+
+	if (listen(sfd, BACKLOG) == -1) {
+		fprintf(stderr, "listen error");
+		close(sfd);
+		return NULL;
+	}
+
 	/* register events for poll */
 	fds[0].fd = r_queue->efd;
 	fds[0].events = POLLIN;
+	fds[1].fd = sfd;
+	fds[1].events = POLLIN;
 
 	for(;;) {
-		ret = poll(fds, 1, -1); /* wait for ever */
+		ret = poll(fds, 2, -1); /* wait for ever */
 		if ( ret < 1 ) { /* 0 not expected */
 			fprintf(stderr, "poll returned %d\n", ret);
 			continue;
 		}
 
-		/*
-		 * So far only the queue could have woken us up
-		 */
-		pthread_mutex_lock(&r_queue->mtx);
-		/* We do not expect others to empty the queue but.. */
-		if (SIMPLEQ_EMPTY(&r_queue->qhead)) {
-			pthread_mutex_unlock(&r_queue->mtx);
-			continue;
+		for( i = 0; i < 2; ++i) {
+			if ( !fds[i].revents )
+				continue;
+			switch(i) {
+			case 0: /* queue request */
+				pthread_mutex_lock(&r_queue->mtx);
+				/* others using this queue..? */
+				if (SIMPLEQ_EMPTY(&r_queue->qhead)) {
+					pthread_mutex_unlock(&r_queue->mtx);
+					continue;
+				}
+
+				/* pop from requests queue and unlock */
+				req = SIMPLEQ_FIRST(&r_queue->qhead);
+				SIMPLEQ_REMOVE_HEAD(&r_queue->qhead, entries);
+				/* notify back we read one el of the queue */
+				eventfd_read(r_queue->efd, &ebuf);
+				pthread_mutex_unlock(&r_queue->mtx);
+
+				data = &req->data;
+				/* For the time being we use PAYLOAD_UNDEF as a way
+				   to notify threads to exit
+				*/
+				if (data->reply == PAYLOAD_UNDEF) {
+					fprintf(stderr, "Thread cancellation received\n");
+					if(sfd)
+						close(sfd);
+					return NULL;
+				}
+
+				/* Execute worker-thread specific hook */
+				hook(data);
+
+				/* push to served queue */
+				pthread_mutex_lock(&out_queue->mtx);
+				SIMPLEQ_INSERT_TAIL(&out_queue->qhead, req, entries);
+				pthread_mutex_unlock(&out_queue->mtx);
+				break;
+			case 1: /* TCP socket */
+				cfd = accept(sfd, NULL, NULL);
+				if (cfd == -1) {
+					fprintf(stderr, "accept!\n");
+					continue;
+				}
+				while( (ret = read(cfd, buf, BSIZE)) > 0 )
+					write(STDOUT_FILENO, buf, ret);
+				break;
+			default: /* it should not happen */
+				fprintf(stderr, "what?!?!\n");
+			}
 		}
-
-		/* pop from requests queue and unlock */
-		req = SIMPLEQ_FIRST(&r_queue->qhead);
-		SIMPLEQ_REMOVE_HEAD(&r_queue->qhead, entries);
-		/* notify back we read one el of the queue */
-		eventfd_read(r_queue->efd, &ebuf);
-		pthread_mutex_unlock(&r_queue->mtx);
-
-		data = &req->data;
-		/* For the time being we use PAYLOAD_UNDEF as a way
-		   to notify threads to exit
-		*/
-		if (data->reply == PAYLOAD_UNDEF) {
-			fprintf(stderr, "Thread cancellation received\n");
-			return NULL;
-		}
-
-		/* Execute worker-thread specific hook */
-		hook(data);
-
-		/* push to served queue */
-		pthread_mutex_lock(&out_queue->mtx);
-		SIMPLEQ_INSERT_TAIL(&out_queue->qhead, req, entries);
-		pthread_mutex_unlock(&out_queue->mtx);
 	}
 	return NULL;
 }
