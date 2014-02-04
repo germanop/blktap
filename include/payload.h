@@ -27,6 +27,7 @@ struct payload {
 	uint64_t req;
 	off64_t vhd_size;
 	payload_message_t reply;
+	char ipaddr[32]; /* used internally */
 };
 
 int init_payload(struct payload *);

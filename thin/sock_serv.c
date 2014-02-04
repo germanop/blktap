@@ -16,6 +16,7 @@
 #include "kpr_util.h"
 
 #define BACKLOG 5
+#define PORT_NO 7777
 
 static inline int process_payload(int, struct payload *);
 static inline int req_reply(int, struct payload *);
@@ -23,8 +24,9 @@ static int handle_request(struct payload * buf);
 static int handle_query(struct payload * buf);
 static void * worker_thread(void *);
 static void * worker_thread_net(void *);
-static void slave_worker_hook(struct payload *);
-static void reject_hook(struct payload *);
+static int slave_worker_hook(struct payload *);
+static int reject_hook(struct payload *);
+static int dispatch_hook(struct payload *);
 static int increase_size(off64_t size, const char * path);
 static void parse_cmdline(int, char **);
 static int do_daemon(void);
@@ -52,7 +54,7 @@ static struct sq_entry * find_and_remove(struct sqhead *, pid_t);
 struct kpr_thread_info {
 	pthread_t thr_id;
 	struct kpr_queue *r_queue;
-	void (*hook)(struct payload *);
+	int (*hook)(struct payload *);
 };
 
 /* list structures */
@@ -126,7 +128,7 @@ main(int argc, char *argv[]) {
 	/* prepare and spawn default thread */
 	struct kpr_thread_info def_thr_info;
 	def_thr_info.r_queue = def_in_queue;
-	def_thr_info.hook = reject_hook;
+	def_thr_info.hook = dispatch_hook;
 	if (pthread_create(&def_thr_info.thr_id, NULL, worker_thread_net, &def_thr_info)) {
 		printf("failed worker thread creation\n");
 		return 1;
@@ -334,7 +336,7 @@ worker_thread(void * ap)
 	struct payload * data;
 	struct kpr_thread_info *thr_arg;
 	struct kpr_queue *r_queue;
-	void (*hook)(struct payload *);
+	int (*hook)(struct payload *);
 
 	/* We must guarantee this structure is properly polulated or
 	   check it and fail in case it is not. In the latter case
@@ -387,9 +389,8 @@ worker_thread_net(void * ap)
 
 	struct pollfd fds[2];
 	int i;
-	void (*hook)(struct payload *);
+	int (*hook)(struct payload *);
 
-#define PORT_NO 7777
 #define BSIZE 64
 	int sfd, cfd;
 	char buf[BSIZE];
@@ -454,7 +455,10 @@ worker_thread_net(void * ap)
 				}
 
 				/* Execute worker-thread specific hook */
-				hook(data);
+				if ( hook(data) ) {
+					free(req);
+					continue;
+				}
 
 				/* push to served queue */
 				pthread_mutex_lock(&out_queue->mtx);
@@ -479,7 +483,7 @@ worker_thread_net(void * ap)
 }
 
 
-static void
+static int
 slave_worker_hook(struct payload *data)
 {
 	int ret;
@@ -492,15 +496,46 @@ slave_worker_hook(struct payload *data)
 		data->reply = PAYLOAD_REJECTED;
 	printf("worker_thread: completed %u %s (%d)\n\n",
 	       (unsigned)data->id, data->path, ret);
+
+	return 0;
 }
 
 
-static void
+static int
 reject_hook(struct payload *data)
 {
 	/* Reject request */
 	data->reply = PAYLOAD_REJECTED;
 	printf("default_thread: No registered VG!\n\n");
+
+	return 0;
+}
+
+/**
+ * Send packet to specified destination. If send is successful and
+ * packet is accepted it returns 1 because there is nothing more
+ * to be done. Reply will come on the TCP socket.
+ *
+ * @param[in,out] data to be processed
+ * @return 0 if packet is rejected and marked as such, 1 otherwise
+ */
+static int
+dispatch_hook(struct payload *data)
+{
+	/* Send */
+	if ( !kpr_tcp_conn_tx_rx(data->ipaddr, PORT_NO, data ) ) {
+		fprintf(stderr, "Dispatch failed\n");
+		goto fail;
+	}
+	/* Check reply */
+	if ( data->reply != PAYLOAD_ACCEPTED ) {
+		fprintf(stderr, "Payload rejected\n");
+		goto fail;
+	}
+
+	return 1;
+fail:
+	return reject_hook(data);
 }
 
 

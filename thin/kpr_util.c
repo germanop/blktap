@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
+#include "payload.h"
 
 #define PFX_SIZE 5
 #define TCP_BACKLOG 10
@@ -111,4 +113,54 @@ kpr_tcp_create(uint16_t port)
 fail:
 	close(sfd);
 	return 0;
+}
+
+
+int
+kpr_tcp_conn_tx_rx(const char *ip, uint16_t port, struct payload * message)
+{
+	int sfd, ret, len;
+	struct sockaddr_in s_addr;
+	struct in_addr ipaddr;
+
+	if ( !inet_aton(ip, &ipaddr) ) {
+		ret = 1;
+		goto end;
+	}
+
+	len = sizeof(struct payload);
+
+	/* create tcp socket */
+	sfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (sfd == -1) {
+		ret = 1;
+		goto end;
+	}
+
+	memset(&s_addr, 0, sizeof(s_addr));
+	s_addr.sin_family = AF_INET;
+	s_addr.sin_port = htons(port);
+	s_addr.sin_addr = ipaddr;
+
+	if ( connect(sfd, (struct sockaddr *) &s_addr, sizeof(s_addr)) ) {
+		ret = 1;
+		goto end;
+	}
+
+	/* TBD: very basic write, need a while loop */
+	if (write(sfd, message, len) != len) {
+		ret = 1;
+		goto end;
+	}
+
+	/* TBD: very basic read */
+	if (read(sfd, message, len) != len) {
+		ret = 2;
+		goto end;
+	}
+
+end:
+	close(sfd);
+	return 0;    /* Closes our socket; server sees EOF */
+
 }
