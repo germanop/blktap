@@ -78,7 +78,7 @@ kpr_split_lvm_path(const char * path, char * vg, char * lv)
  * Create, bind and listen to specified socket
  *
  * @param[in] port number
- * @return file descriptor of socket or 0
+ * @return file descriptor of socket or -1
  */
 int
 kpr_tcp_create(uint16_t port)
@@ -90,7 +90,7 @@ kpr_tcp_create(uint16_t port)
 	sfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sfd == -1) {
 		fprintf(stderr, "tcp socket error");
-		return 0;
+		return -1;
 	}
 
 	/* Build socket address, bind and listen */
@@ -112,7 +112,7 @@ kpr_tcp_create(uint16_t port)
 	return sfd;
 fail:
 	close(sfd);
-	return 0;
+	return -1;
 }
 
 
