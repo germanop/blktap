@@ -56,6 +56,7 @@ struct kpr_thread_info {
 	pthread_t thr_id;
 	struct kpr_queue *r_queue;
 	int (*hook)(struct payload *);
+	bool net;
 };
 
 /* list structures */
@@ -126,11 +127,15 @@ main(int argc, char *argv[]) {
 	if (do_daemon() == -1)
 		return 1; /* can do better */
 
-	/* prepare and spawn default thread */
-	struct kpr_thread_info def_thr_info;
-	def_thr_info.r_queue = def_in_queue;
-	def_thr_info.hook = dispatch_hook;
-	if (pthread_create(&def_thr_info.thr_id, NULL, worker_thread_net, &def_thr_info)) {
+	/* prepare and spawn default thread: use vg_entry even if not VG */
+	struct vg_entry net_thr;
+	net_thr.thr.r_queue = def_in_queue;
+	net_thr.thr.hook = reject_hook;
+	net_thr.thr.net = false;
+	if (net_thr.thr.net) /* so gcc does not bother because dispatch unused */
+			net_thr.thr.hook = dispatch_hook;
+	if (pthread_create(&net_thr.thr.thr_id, NULL, worker_thread_net,
+			   &net_thr.thr)) {
 		printf("failed worker thread creation\n");
 		return 1;
 	}
@@ -390,6 +395,7 @@ worker_thread_net(void * ap)
 	struct kpr_queue *r_queue;
 
 	struct pollfd fds[2];
+	int maxfds = 2;
 	int i;
 	int (*hook)(struct payload *);
 
@@ -408,25 +414,33 @@ worker_thread_net(void * ap)
 	r_queue = thr_arg->r_queue;
 	hook = thr_arg->hook;
 
-	/* create tcp socket and listen */
-	sfd = kpr_tcp_create(PORT_NO);
-	if (!sfd)
-		return NULL;
+	/*
+	 * Network specific block
+	 */
+	if (thr_arg->net) {
+		/* create tcp socket and listen */
+		sfd = kpr_tcp_create(PORT_NO);
+		if (sfd < 0)
+			return NULL;
+	} else {
+		sfd = -1;
+		maxfds = 1; /* no need to loop more */
+	}
 
 	/* register events for poll */
 	fds[0].fd = r_queue->efd;
 	fds[0].events = POLLIN;
-	fds[1].fd = sfd;
+	fds[1].fd = sfd; /* if net=false it is ok to be negative */
 	fds[1].events = POLLIN;
 
 	for(;;) {
-		ret = poll(fds, 2, -1); /* wait for ever */
+		ret = poll(fds, maxfds, -1); /* wait for ever */
 		if ( ret < 1 ) { /* 0 not expected */
 			fprintf(stderr, "poll returned %d\n", ret);
 			continue;
 		}
 
-		for( i = 0; i < 2; ++i) {
+		for( i = 0; i < maxfds; ++i) {
 			if ( !fds[i].revents )
 				continue;
 			switch(i) {
@@ -452,7 +466,7 @@ worker_thread_net(void * ap)
 				if (data->reply == PAYLOAD_UNDEF) {
 					fprintf(stderr, "Thread cancellation received\n");
 					free(req);
-					if(sfd)
+					if(sfd >= 0)
 						close(sfd);
 					return NULL;
 				}
