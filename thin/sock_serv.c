@@ -27,6 +27,7 @@ static void * worker_thread_net(void *);
 static int slave_worker_hook(struct payload *);
 static int reject_hook(struct payload *);
 static int dispatch_hook(struct payload *);
+static int slave_hook(struct payload *);
 static int increase_size(off64_t size, const char * path);
 static void parse_cmdline(int, char **);
 static int do_daemon(void);
@@ -391,9 +392,9 @@ worker_thread_net(void * ap)
 	int i;
 	int (*hook)(struct payload *);
 
-#define BSIZE 64
 	int sfd, cfd;
-	char buf[BSIZE];
+	struct payload buf;
+	static int len = sizeof(buf);
 
 	uint64_t ebuf;
 	int ret;
@@ -468,11 +469,39 @@ worker_thread_net(void * ap)
 			case 1: /* TCP socket */
 				cfd = accept(sfd, NULL, NULL);
 				if (cfd == -1) {
-					fprintf(stderr, "accept!\n");
+					fprintf(stderr, "Accept error\n");
 					continue;
 				}
-				while( (ret = read(cfd, buf, BSIZE)) > 0 )
-					write(STDOUT_FILENO, buf, ret);
+				if ( read(cfd, &buf, len) != len ) {
+					fprintf(stderr, "TCP read error\n");
+					continue;
+				}
+
+				req = malloc(sizeof(struct sq_entry));
+				if(!req) {
+					fprintf(stderr, "Cannot allocate"
+						"for TCP packet\n");
+					continue;
+				}
+
+				req->data = buf;
+				buf.reply = PAYLOAD_ACCEPTED;
+
+				/* Always acknowledge we got it */
+				/* TBD: very basic write, need a while loop */
+				if (write(cfd, &buf, len) != len)
+					fprintf(stderr, "TCP not "
+						"acknowledged\n");
+
+				/* process payload */
+				if ( slave_hook(&buf) )
+					free(req);
+					continue;
+
+				/* push to served queue */
+				pthread_mutex_lock(&out_queue->mtx);
+				SIMPLEQ_INSERT_TAIL(&out_queue->qhead, req, entries);
+				pthread_mutex_unlock(&out_queue->mtx);
 				break;
 			default: /* it should not happen */
 				fprintf(stderr, "what?!?!\n");
@@ -536,6 +565,27 @@ dispatch_hook(struct payload *data)
 	return 1;
 fail:
 	return reject_hook(data);
+}
+
+
+/**
+ * Packet can be either DONE or REJECTED, in any other case packet
+ * is discarded.
+ *
+ * @param[in,out] data to be processed
+ * @return 0 if packet can be pushed in the "served" queue, 1 otherwise
+ */
+static int
+slave_hook(struct payload *data)
+{
+	/* Check reply */
+	if ( !(data->reply == PAYLOAD_DONE ||
+	      data->reply == PAYLOAD_REJECTED) ) {
+		fprintf(stderr, "Spurious payload\n");
+		return 1;
+	}
+
+	return 0;
 }
 
 
