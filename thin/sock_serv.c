@@ -364,6 +364,7 @@ worker_thread(void * ap)
 		   to notify threads to exit
 		*/
 		if (data->reply == PAYLOAD_UNDEF) {
+			free(req);
 			fprintf(stderr, "Thread cancellation received\n");
 			return NULL;
 		}
@@ -450,6 +451,7 @@ worker_thread_net(void * ap)
 				*/
 				if (data->reply == PAYLOAD_UNDEF) {
 					fprintf(stderr, "Thread cancellation received\n");
+					free(req);
 					if(sfd)
 						close(sfd);
 					return NULL;
