@@ -45,13 +45,14 @@ struct kpr_queue {
 	pthread_mutex_t mtx;
 	pthread_cond_t cnd;
 	int efd; /* some queues are notified by eventfd */
-} *def_in_queue, *out_queue;
+} *net_queue, *out_queue;
 struct sq_entry {
 	struct payload data;
 	SIMPLEQ_ENTRY(sq_entry) entries;
 };
 
 static struct sq_entry * find_and_remove(struct sqhead *, pid_t);
+static struct kpr_queue * get_out_queue(struct payload *);
 
 /* thread structures */
 struct kpr_thread_info {
@@ -116,8 +117,8 @@ main(int argc, char *argv[]) {
 		return 1;	
 
 	/* Init default queues */
-	def_in_queue = alloc_init_queue();
-	if(!def_in_queue)
+	net_queue = alloc_init_queue();
+	if(!net_queue)
 		return 1; /*no free: return from main */
 	out_queue = alloc_init_queue();
 	if(!out_queue)
@@ -134,7 +135,7 @@ main(int argc, char *argv[]) {
 
 	/* prepare and spawn default thread: use vg_entry even if not VG */
 	struct vg_entry net_thr;
-	net_thr.thr.r_queue = def_in_queue;
+	net_thr.thr.r_queue = net_queue;
 	net_thr.thr.hook = reject_hook;
 	net_thr.thr.net = false;
 	if (net_thr.thr.net) /* so gcc does not bother because dispatch unused */
@@ -171,8 +172,14 @@ main(int argc, char *argv[]) {
 		if (cfd == -1)
 			return -errno;
 
-		while ((numRead = read(cfd, &buf, sizeof(buf))) > 0)
+		while ((numRead = read(cfd, &buf, sizeof(buf))) > 0) {
+			/* temporary: ensure ipaddr is NULL if coming from
+			   socket. Remove if network thread is sending packets
+			   through the socket
+			*/
+			buf.ipaddr[0] = '\0';
 			process_payload(cfd, &buf);
+		}
 
 		if (numRead == -1)
 			return -errno;
@@ -243,7 +250,7 @@ handle_request(struct payload * buf)
 			buf->reply = PAYLOAD_REJECTED;
 		}
 		else
-			in_queue = def_in_queue;
+			in_queue = net_queue;
 
 	req = malloc(sizeof(struct sq_entry));
 	if(!req)
@@ -256,7 +263,7 @@ handle_request(struct payload * buf)
 	SIMPLEQ_INSERT_TAIL(&in_queue->qhead, req, entries);
 
 	/* Temporary hack for the new event mechanism used by default queue */
-	if ( in_queue == def_in_queue )
+	if ( in_queue == net_queue )
 		eventfd_write(in_queue->efd, 1);
 	else if ( in_queue == out_queue )
 		/* no need to signal for out_queue */
@@ -355,7 +362,7 @@ worker_thread(void * ap)
 	struct sq_entry * req;
 	struct payload * data;
 	struct kpr_thread_info *thr_arg;
-	struct kpr_queue *r_queue;
+	struct kpr_queue *r_queue, *o_queue;
 	int (*hook)(struct payload *);
 
 	/* We must guarantee this structure is properly polulated or
@@ -391,10 +398,11 @@ worker_thread(void * ap)
 		/* Execute worker-thread specific hook */
 		hook(data);
 
-		/* push to served queue */
-		pthread_mutex_lock(&out_queue->mtx);
-		SIMPLEQ_INSERT_TAIL(&out_queue->qhead, req, entries);
-		pthread_mutex_unlock(&out_queue->mtx);
+		/* push to out queue */
+		o_queue = get_out_queue(data);
+		pthread_mutex_lock(&o_queue->mtx);
+		SIMPLEQ_INSERT_TAIL(&o_queue->qhead, req, entries);
+		pthread_mutex_unlock(&o_queue->mtx);
 	}
 	return NULL;
 }
@@ -865,3 +873,11 @@ vg_pool_find_and_remove(char *vg_name)
 }
 
 
+static struct kpr_queue *
+get_out_queue(struct payload *data)
+{
+	if ( master && (data->ipaddr[0] != '\0') )
+		return net_queue;
+
+	return out_queue;
+}
