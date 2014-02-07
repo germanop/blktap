@@ -532,7 +532,7 @@ worker_thread_net(void * ap)
 						"acknowledged\n");
 
 				/* process payload */
-				if ( slave_hook(&buf) )
+				if ( slave_hook(&req->data) )
 					free(req);
 					continue;
 
