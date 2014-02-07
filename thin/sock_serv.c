@@ -36,6 +36,8 @@ static void split_command(char *, char **);
 static int add_vg(char *vg);
 static int del_vg(char *vg);
 
+bool master; /* no need to be mutex-ed: main writes, workers read */
+
 /* queue structures */
 SIMPLEQ_HEAD(sqhead, sq_entry);
 struct kpr_queue {
@@ -104,6 +106,9 @@ alloc_init_queue(void)
 
 int
 main(int argc, char *argv[]) {
+
+	/* default is master mode */
+	master = true;
 
 	/* Init pool */
 	LIST_INIT(&vg_pool.head);
@@ -231,8 +236,14 @@ handle_request(struct payload * buf)
 	vgentry = vg_pool_find(vgname, true);
 	if (vgentry) /* we do */
 		in_queue = vgentry->r_queue; /* no lock (sure?) */
-	else /* default */
-		in_queue = def_in_queue;
+	else
+		/* In master mode this means rejected */
+		if (master) {
+			in_queue = out_queue;
+			buf->reply = PAYLOAD_REJECTED;
+		}
+		else
+			in_queue = def_in_queue;
 
 	req = malloc(sizeof(struct sq_entry));
 	if(!req)
@@ -247,6 +258,9 @@ handle_request(struct payload * buf)
 	/* Temporary hack for the new event mechanism used by default queue */
 	if ( in_queue == def_in_queue )
 		eventfd_write(in_queue->efd, 1);
+	else if ( in_queue == out_queue )
+		/* no need to signal for out_queue */
+		;
 	else
 		pthread_cond_signal(&in_queue->cnd);
 	pthread_mutex_unlock(&in_queue->mtx);
@@ -483,7 +497,7 @@ worker_thread_net(void * ap)
 				pthread_mutex_unlock(&out_queue->mtx);
 				break;
 			case 1: /* TCP socket */
-				cfd = accept(sfd, NULL, NULL);
+				cfd = accept4(sfd, NULL, NULL, SOCK_CLOEXEC);
 				if (cfd == -1) {
 					fprintf(stderr, "Accept error\n");
 					continue;
