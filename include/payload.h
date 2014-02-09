@@ -5,6 +5,7 @@
 #include "tapdisk-message.h"
 
 #define PAYLOAD_MAX_PATH_LENGTH TAPDISK_MESSAGE_MAX_PATH_LENGTH
+#define IP_MAX_LEN 32
 
 typedef enum {
 	/* server */
@@ -27,7 +28,7 @@ struct payload {
 	uint64_t req;
 	off64_t vhd_size;
 	payload_message_t reply;
-	char ipaddr[32]; /* used internally */
+	char ipaddr[IP_MAX_LEN]; /* used internally */
 };
 
 int init_payload(struct payload *);

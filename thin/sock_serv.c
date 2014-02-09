@@ -37,6 +37,9 @@ static int add_vg(char *vg);
 static int del_vg(char *vg);
 
 bool master; /* no need to be mutex-ed: main writes, workers read */
+char master_ip[IP_MAX_LEN]; /* used only in slave mode, ensure it is
+			       NULL terminated */
+
 
 /* queue structures */
 SIMPLEQ_HEAD(sqhead, sq_entry);
@@ -136,10 +139,8 @@ main(int argc, char *argv[]) {
 	/* prepare and spawn default thread: use vg_entry even if not VG */
 	struct vg_entry net_thr;
 	net_thr.thr.r_queue = net_queue;
-	net_thr.thr.hook = reject_hook;
-	net_thr.thr.net = false;
-	if (net_thr.thr.net) /* so gcc does not bother because dispatch unused */
-			net_thr.thr.hook = dispatch_hook;
+	net_thr.thr.hook = dispatch_hook;
+	net_thr.thr.net = true;
 	if (pthread_create(&net_thr.thr.thr_id, NULL, worker_thread_net,
 			   &net_thr.thr)) {
 		printf("failed worker thread creation\n");
@@ -249,8 +250,11 @@ handle_request(struct payload * buf)
 			in_queue = out_queue;
 			buf->reply = PAYLOAD_REJECTED;
 		}
-		else
+		else {
+			/* write master address */
+			strncpy(buf->ipaddr, master_ip, IP_MAX_LEN);
 			in_queue = net_queue;
+		}
 
 	req = malloc(sizeof(struct sq_entry));
 	if(!req)
