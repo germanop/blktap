@@ -586,9 +586,12 @@ reject_hook(struct payload *data)
  * Send packet to specified destination. If send is successful and
  * packet is accepted it returns 1 because there is nothing more
  * to be done. Reply will come on the TCP socket.
+ * In master mode packets not sent are discarded, while in slave
+ * mode they are queued as rejected.
  *
  * @param[in,out] data to be processed
- * @return 0 if packet is rejected and marked as such, 1 otherwise
+ * @return 0 if packet is not sent and marked rejected.
+ *   1 if sent or to be discarded anyway
  */
 static int
 dispatch_hook(struct payload *data)
@@ -606,7 +609,7 @@ dispatch_hook(struct payload *data)
 
 	return 1;
 fail:
-	return reject_hook(data);
+	return master ? 1 : reject_hook(data);
 }
 
 
