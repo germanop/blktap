@@ -32,6 +32,7 @@ static int dispatch_hook(struct payload *);
 static int slave_net_hook(struct payload *);
 static int master_net_hook(struct payload *);
 static int increase_size(off64_t size, const char * path);
+static int refresh_lvm(const char * path);
 static void parse_cmdline(int, char **);
 static int do_daemon(void);
 static int handle_cli(struct payload *);
@@ -644,9 +645,13 @@ fail:
 static int
 slave_net_hook(struct payload *data)
 {
-	/* Check reply */
-	if ( !(data->reply == PAYLOAD_DONE ||
-	      data->reply == PAYLOAD_REJECTED) ) {
+	switch(data->reply) {
+	case PAYLOAD_REJECTED:
+		break;
+	case PAYLOAD_DONE:
+		refresh_lvm(data->path);
+		break;
+	default:
 		fprintf(stderr, "Spurious payload\n");
 		return 1;
 	}
@@ -680,11 +685,13 @@ master_net_hook(struct payload *data)
 
 
 /**
- * @size: current size to increase in bytes
- * @path: device full path
+ * @param size: current size to increase in bytes
+ * @param path: device full path
+ * @return command return code if command returned properly, -1 otherwise
  */
 static int
-increase_size(off64_t size, const char * path) {
+increase_size(off64_t size, const char * path)
+{
 #define NCHARS 16
 	pid_t pid;
 	int status, num_read;
@@ -710,7 +717,36 @@ increase_size(off64_t size, const char * path) {
 			status = WEXITSTATUS(status);
 		else
 			return -1;
-		return status; /* actually 3 is as fine as 0.. */
+		return status;
+	}
+}
+
+
+/**
+ * @param path: device full path
+ * @return command return code if command returned properly, -1 otherwise
+ */
+static int
+refresh_lvm(const char * path)
+{
+	pid_t pid;
+	int status;
+
+	switch (pid = fork()) {
+	case -1:
+		return -1;
+	case 0: /* child */
+		execl("/sbin/lvchange", "lvchange", "--refresh", path,
+		      (char *)NULL);
+		_exit(127); /* TBD */
+	default: /* parent */
+		if (waitpid(pid, &status, 0) == -1)
+			return -1;
+		else if (WIFEXITED(status)) /* normal exit? */
+			status = WEXITSTATUS(status);
+		else
+			return -1;
+		return status;
 	}
 }
 
