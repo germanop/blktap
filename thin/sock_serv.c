@@ -43,8 +43,14 @@ static int slave_mode(char *ip);
 static int master_mode(void);
 
 bool master; /* no need to be mutex-ed: main writes, workers read */
-char master_ip[IP_MAX_LEN]; /* used only in slave mode, ensure it is
-			       NULL terminated */
+char master_ip[IP_MAX_LEN]; /*
+			      Used only in slave mode, ensure it is
+			      NULL terminated. This variable is used
+			      only in handle_request but, as long as
+			      this function is used in the network thread,
+			      it must be mutex protected
+			    */
+pthread_mutex_t ip_mtx = PTHREAD_MUTEX_INITIALIZER; /* see above */
 
 
 /* queue structures */
@@ -266,7 +272,9 @@ handle_request(struct payload * buf)
 		}
 		else {
 			/* write master address */
+			pthread_mutex_lock(&ip_mtx);
 			strncpy(buf->ipaddr, master_ip, IP_MAX_LEN);
+			pthread_mutex_unlock(&ip_mtx);
 			in_queue = net_queue;
 		}
 
@@ -922,6 +930,22 @@ int
 slave_mode(char *ipaddr)
 {
 	fprintf(stderr, "CLI slave %s received\n", ipaddr);
+	if (master) {
+		fprintf(stderr, "Fake: switching master to slave\n");
+	} else {
+		fprintf(stderr, "Already in slave mode: checking ip addr\n");
+		pthread_mutex_lock(&ip_mtx); /* not really needed.. */
+		if ( !strcmp(master_ip, ipaddr) ) {
+			fprintf(stderr, "nothing to be done\n");
+			goto done;
+		}
+		strncpy(master_ip, ipaddr, IP_MAX_LEN);
+		pthread_mutex_unlock(&ip_mtx);
+	}
+
+	return 0;
+done:
+	pthread_mutex_unlock(&ip_mtx);
 	return 0;
 }
 
