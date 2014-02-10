@@ -39,6 +39,8 @@ static int handle_cli(struct payload *);
 static void split_command(char *, char **);
 static int add_vg(char *vg);
 static int del_vg(char *vg);
+static int slave_mode(char *ip);
+static int master_mode(void);
 
 bool master; /* no need to be mutex-ed: main writes, workers read */
 char master_ip[IP_MAX_LEN]; /* used only in slave mode, ensure it is
@@ -343,6 +345,14 @@ handle_cli(struct payload * buf)
 		if(!cmd[1])
 			return 1;
 		ret = del_vg(cmd[1]);
+	}
+	else if (!strcmp("slave", cmd[0])) {
+		if(!cmd[1])
+			return 1;
+		ret = slave_mode(cmd[1]);
+	}
+	else if (!strcmp("master", cmd[0])) {
+		ret = master_mode();
 	}
 	else
 		ret = 1;
@@ -904,6 +914,22 @@ del_vg(char *vg)
 	free(p_vg->r_queue);
 	free(p_vg);
 
+	return 0;
+}
+
+
+int
+slave_mode(char *ipaddr)
+{
+	fprintf(stderr, "CLI slave %s received\n", ipaddr);
+	return 0;
+}
+
+
+int
+master_mode(void)
+{
+	fprintf(stderr, "CLI master received\n");
 	return 0;
 }
 
