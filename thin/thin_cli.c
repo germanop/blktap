@@ -16,7 +16,7 @@ main(int argc, char *argv[]) {
 		{ "add", required_argument, NULL, 0 },
 		{ "del", required_argument, NULL, 0 },
 		{ "master", no_argument, NULL, 0 },
-		{ "slave", required_argument, NULL, 0 },
+		{ "slave", required_argument, NULL, 's' },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -31,6 +31,15 @@ main(int argc, char *argv[]) {
 			ret = snprintf(message.path, PAYLOAD_MAX_PATH_LENGTH,
 				       "%s %s", longopts[opt_idx].name, optarg);
 			if (ret >= PAYLOAD_MAX_PATH_LENGTH) {
+				fprintf(stderr, "input too long\n");
+				return 2;
+			}
+			flag = 0;
+			break;
+		case 's':
+			ret = snprintf(message.path, IP_MAX_LEN, "%s %s",
+				       longopts[opt_idx].name, optarg);
+			if (ret >= IP_MAX_LEN) {
 				fprintf(stderr, "input too long\n");
 				return 2;
 			}
