@@ -15,6 +15,8 @@ main(int argc, char *argv[]) {
 	const struct option longopts[] = {
 		{ "add", required_argument, NULL, 0 },
 		{ "del", required_argument, NULL, 0 },
+		{ "master", no_argument, NULL, 0 },
+		{ "slave", required_argument, NULL, 0 },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -25,6 +27,7 @@ main(int argc, char *argv[]) {
 				  longopts, &opt_idx)) != -1 && flag) {
 		switch(arg) {
 		case 0:
+			/* master: it is fine to have a string with trailing spaces */
 			ret = snprintf(message.path, PAYLOAD_MAX_PATH_LENGTH,
 				       "%s %s", longopts[opt_idx].name, optarg);
 			if (ret >= PAYLOAD_MAX_PATH_LENGTH) {
@@ -64,6 +67,9 @@ main(int argc, char *argv[]) {
 static void
 usage(char *prog_name)
 {
+	printf("usage: %s -h\n", prog_name);
 	printf("usage: %s --add <volume group name>\n", prog_name);
 	printf("usage: %s --del <volume group name>\n", prog_name);
+	printf("usage: %s --master\n", prog_name);
+	printf("usage: %s --slave <master ip addr>\n", prog_name);
 }
