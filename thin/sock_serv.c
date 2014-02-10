@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <sys/un.h>
 #include <sys/socket.h>
+#include <netinet/in.h> /* TCP accept client info */
+#include <arpa/inet.h> /* TCP accept client info */
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -27,7 +29,8 @@ static void * worker_thread_net(void *);
 static int slave_worker_hook(struct payload *);
 static int reject_hook(struct payload *);
 static int dispatch_hook(struct payload *);
-static int slave_hook(struct payload *);
+static int slave_net_hook(struct payload *);
+static int master_net_hook(struct payload *);
 static int increase_size(off64_t size, const char * path);
 static void parse_cmdline(int, char **);
 static int do_daemon(void);
@@ -62,6 +65,7 @@ struct kpr_thread_info {
 	pthread_t thr_id;
 	struct kpr_queue *r_queue;
 	int (*hook)(struct payload *);
+	int (*net_hook)(struct payload *);
 	bool net;
 };
 
@@ -140,6 +144,10 @@ main(int argc, char *argv[]) {
 	struct vg_entry net_thr;
 	net_thr.thr.r_queue = net_queue;
 	net_thr.thr.hook = dispatch_hook;
+	if (master)
+		net_thr.thr.net_hook = master_net_hook;
+	else
+		net_thr.thr.net_hook = slave_net_hook;
 	net_thr.thr.net = true;
 	if (pthread_create(&net_thr.thr.thr_id, NULL, worker_thread_net,
 			   &net_thr.thr)) {
@@ -247,6 +255,9 @@ handle_request(struct payload * buf)
 	else
 		/* In master mode this means rejected */
 		if (master) {
+			/* hack to reuse it in net_thread */
+			if (buf->ipaddr[0] != '\0')
+				return 1;
 			in_queue = out_queue;
 			buf->reply = PAYLOAD_REJECTED;
 		}
@@ -424,10 +435,14 @@ worker_thread_net(void * ap)
 	int maxfds = 2;
 	int i;
 	int (*hook)(struct payload *);
+	int (*net_hook)(struct payload *);
 
 	int sfd, cfd;
 	struct payload buf;
 	static int len = sizeof(buf);
+	struct sockaddr_in c_addr;
+	socklen_t c_len;
+	char *c;
 
 	uint64_t ebuf;
 	int ret;
@@ -439,6 +454,7 @@ worker_thread_net(void * ap)
 	thr_arg = (struct kpr_thread_info *) ap;
 	r_queue = thr_arg->r_queue;
 	hook = thr_arg->hook;
+	net_hook = thr_arg->net_hook;
 
 	/*
 	 * Network specific block
@@ -509,7 +525,8 @@ worker_thread_net(void * ap)
 				pthread_mutex_unlock(&out_queue->mtx);
 				break;
 			case 1: /* TCP socket */
-				cfd = accept4(sfd, NULL, NULL, SOCK_CLOEXEC);
+				c_len = sizeof(c_addr);
+				cfd = accept4(sfd, &c_addr, &c_len, SOCK_CLOEXEC);
 				if (cfd == -1) {
 					fprintf(stderr, "Accept error\n");
 					continue;
@@ -535,8 +552,12 @@ worker_thread_net(void * ap)
 					fprintf(stderr, "TCP not "
 						"acknowledged\n");
 
+				/* store sender ipaddr */
+				c = inet_ntoa(c_addr.sin_addr);
+				strncpy(req->data.ipaddr, c, IP_MAX_LEN);
+
 				/* process payload */
-				if ( slave_hook(&req->data) )
+				if ( net_hook(&req->data) )
 					free(req);
 					continue;
 
@@ -621,7 +642,7 @@ fail:
  * @return 0 if packet can be pushed in the "served" queue, 1 otherwise
  */
 static int
-slave_hook(struct payload *data)
+slave_net_hook(struct payload *data)
 {
 	/* Check reply */
 	if ( !(data->reply == PAYLOAD_DONE ||
@@ -634,7 +655,31 @@ slave_hook(struct payload *data)
 }
 
 
-/*
+/**
+ * Packet can be only a REQUEST, in any other case packet
+ * is discarded. If it is a request, we always return 1 because
+ * it is either pushed in the proper queue here or discarded.
+ *
+ * @param[in,out] data to be processed
+ * @return 1
+ */
+static int
+master_net_hook(struct payload *data)
+{
+	/* Check reply */
+	if ( data->reply != PAYLOAD_REQUEST ) {
+		fprintf(stderr, "Spurious payload\n");
+		return 1;
+	}
+
+	/* Either way we need to return 1 to avoid further push in queue */
+	if ( handle_request(data) )
+		fprintf(stderr, "Packet discarded\n");
+	return 1;
+}
+
+
+/**
  * @size: current size to increase in bytes
  * @path: device full path
  */
@@ -750,6 +795,7 @@ add_vg(char *vg)
 	/* Prepare and start VG specific thread */
 	p_vg->thr.r_queue = p_vg->r_queue;
 	p_vg->thr.hook = slave_worker_hook;
+	p_vg->thr.net_hook = NULL;
 	if (pthread_create(&p_vg->thr.thr_id, NULL, worker_thread, &p_vg->thr)) {
 		fprintf(stderr, "Failed worker thread creation for %s\n",
 			p_vg->name);
