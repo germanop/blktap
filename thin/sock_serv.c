@@ -261,7 +261,7 @@ handle_request(struct payload * buf)
 	vgentry = vg_pool_find(vgname, true);
 	if (vgentry) /* we do */
 		in_queue = vgentry->r_queue; /* no lock (sure?) */
-	else
+	else {
 		/* In master mode this means rejected */
 		if (master) {
 			/* hack to reuse it in net_thread */
@@ -277,6 +277,7 @@ handle_request(struct payload * buf)
 			pthread_mutex_unlock(&ip_mtx);
 			in_queue = net_queue;
 		}
+	}
 
 	req = malloc(sizeof(struct sq_entry));
 	if(!req)
@@ -576,9 +577,10 @@ worker_thread_net(void * ap)
 				strncpy(req->data.ipaddr, c, IP_MAX_LEN);
 
 				/* process payload */
-				if ( net_hook(&req->data) )
+				if ( net_hook(&req->data) ) {
 					free(req);
 					continue;
+				}
 
 				/* push to served queue */
 				pthread_mutex_lock(&out_queue->mtx);
