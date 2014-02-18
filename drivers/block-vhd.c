@@ -62,7 +62,6 @@
 #include "tapdisk-disktype.h"
 #include "tapdisk-storage.h"
 
-#include "crc32.h"
 #include "payload.h"
 
 unsigned int SPB;
@@ -235,10 +234,6 @@ struct vhd_state {
 	int                       vreq_free_count;
 	struct vhd_request       *vreq_free[VHD_REQS_DATA];
 	struct vhd_request        vreq_list[VHD_REQS_DATA];
-
-	int			  stats_fd;
-	char			 *stats_mem;
-	char			 *stats_name;
 
 	/* thin provisioning data */
 	off64_t                   eof_bytes;
@@ -471,7 +466,7 @@ thin_parse_reply(const struct payload * buf, struct vhd_state *s, int * query)
 	return 0;
 }
 
-static inline void
+static void
 update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 {
 	int err;
@@ -494,23 +489,6 @@ update_next_db(struct vhd_state *s, uint64_t next_db, int notify)
 		if (err)
 			DBG(TLOG_WARN, "thin_parse_reply returned: %d\n", err);
 	}
-
-  struct stats_t {
-    int32_t len;
-    int32_t checksum;
-    char msg[256];    
-  } stats;
-
-  memset(stats.msg,0,sizeof(stats.msg));
-
-  if(s->stats_mem) {
-    snprintf(stats.msg, 256, "%"PRIu64, next_db);
-    stats.len=strlen(stats.msg);
-    stats.checksum=crc((unsigned char *)stats.msg,stats.len);
-    memcpy(s->stats_mem, &stats, sizeof(stats));
-    msync(s->stats_mem, 4096, MS_SYNC);
-  }
-
 }
 
 
@@ -770,46 +748,6 @@ vhd_log_open(struct vhd_state *s)
 		allocated, full, s->next_db);
 }
 
-static void
-vhd_stats_open(struct vhd_state *s, const char *name)
-{
-  char *bname = basename(name);
-  char statsname[256];
-  
-  snprintf(statsname, 256, "/dev/shm/%s.stats", bname);
-
-  s->stats_fd = open(statsname, O_CREAT | O_TRUNC | O_RDWR, 00600);
-  
-  if(s->stats_fd < 0) {
-    EPRINTF("Unable to open stats file [%s]!\n", statsname);
-    return;
-  }
-
-  if(ftruncate(s->stats_fd, 4096) < 0) {
-    EPRINTF("Unable to allocate memory for stats file: %s", strerror(errno));
-
-    close(s->stats_fd);
-    s->stats_fd=0;
-
-    return;
-  }
-
-  s->stats_mem = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, s->stats_fd, 0);
-
-  if(s->stats_mem == (void *)-1) {
-    close(s->stats_fd);
-    s->stats_fd=0;
-    s->stats_mem=0;
-
-    EPRINTF("Unable to mmap stats file [%s] err=%s!\n", statsname, strerror(errno));
-    return;    
-  }
-
-  s->stats_name=strdup(statsname);
-
-  return;
-}
-
 static int
 vhd_thin_prepare(struct vhd_state *s)
 {
@@ -817,28 +755,6 @@ vhd_thin_prepare(struct vhd_state *s)
 		return -errno;
 
 	return 0;
-}
-
-static void
-vhd_stats_close(struct vhd_state *s)
-{
-  if(s->stats_mem) {
-    munmap(s->stats_mem, 4096);
-    s->stats_mem = NULL;
-  }
-
-  if(s->stats_fd) {
-    close(s->stats_fd);
-    s->stats_fd=0;
-  }
-
-  if(s->stats_name != NULL) {
-    if(unlink(s->stats_name) == -1) {
-      EPRINTF("Unable to unlink stats file '%s' (err=%s)\n", s->stats_name, strerror(errno));
-    }
-    free(s->stats_name);
-    s->stats_name=NULL;
-  }
 }
 
 static int
@@ -896,7 +812,6 @@ __vhd_open(td_driver_t *driver, const char *name, vhd_flag_t flags)
 	vhd_log_open(s);
 
 	if(!test_vhd_flag(flags, VHD_FLAG_OPEN_RDONLY)) {
-		vhd_stats_open(s, name);
 		update_next_db(s, s->next_db, 0);
 	}
 
@@ -1036,7 +951,6 @@ _vhd_close(td_driver_t *driver)
 	}
 
  free:
-	vhd_stats_close(s);
 	vhd_log_close(s);
 	vhd_free_bat(s);
 	vhd_free_bitmap_cache(s);
