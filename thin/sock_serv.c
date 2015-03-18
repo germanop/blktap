@@ -155,8 +155,11 @@ main(int argc, char *argv[]) {
 	net_thr.thr.hook = dispatch_hook;
 	if (master)
 		net_thr.thr.net_hook = master_net_hook;
-	else
+	else {
+		printf("Starting daemon in slave mode with master at: %s\n",
+		       master_ip);
 		net_thr.thr.net_hook = slave_net_hook;
+	}
 	net_thr.thr.net = true;
 	if (pthread_create(&net_thr.thr.thr_id, NULL, worker_thread_net,
 			   &net_thr.thr)) {
@@ -522,6 +525,7 @@ worker_thread_net(void * ap)
 				pthread_mutex_unlock(&r_queue->mtx);
 
 				data = &req->data;
+				printf("Request dequeued in dispatch queue\n");
 				/* For the time being we use PAYLOAD_UNDEF as a way
 				   to notify threads to exit
 				*/
@@ -565,6 +569,8 @@ worker_thread_net(void * ap)
 
 				req->data = buf;
 				buf.reply = PAYLOAD_ACCEPTED;
+
+				printf("Payload received on netsocket accepted\n");
 
 				/* Always acknowledge we got it */
 				/* TBD: very basic write, need a while loop */
@@ -648,6 +654,9 @@ dispatch_hook(struct payload *data)
 		fprintf(stderr, "Payload rejected\n");
 		goto fail;
 	}
+	else {
+		printf("Payload dispatched\n");
+	}
 
 	return 1;
 fail:
@@ -672,7 +681,7 @@ slave_net_hook(struct payload *data)
 		refresh_lvm(data->path);
 		break;
 	default:
-		fprintf(stderr, "Spurious payload\n");
+		fprintf(stderr, "Spurious payload in slave_net_hook\n");
 		return 1;
 	}
 
@@ -693,7 +702,8 @@ master_net_hook(struct payload *data)
 {
 	/* Check reply */
 	if ( data->reply != PAYLOAD_REQUEST ) {
-		fprintf(stderr, "Spurious payload\n");
+		fprintf(stderr, "Spurious payload in master_net_hook\n");
+		print_payload(data);
 		return 1;
 	}
 
@@ -776,13 +786,19 @@ parse_cmdline(int argc, char ** argv)
 {
 	int arg, fd_open = 0;
 
-	while ((arg = getopt(argc, argv, "df")) != EOF ) {
+	while ((arg = getopt(argc, argv, "dfs:")) != EOF ) {
 		switch(arg) {
 		case 'd': /* daemonize and close fd */
 			daemonize = 1;
 			break;
 		case 'f': /* if daemonized leave fd open */
 			fd_open = 1;
+			break;
+		case 's':  /* start daemon in slave mode */
+			printf("Master Ip address passed as: %s\n", optarg);
+			strncpy(master_ip, optarg, IP_MAX_LEN);
+			master = false;
+			break;
 		default:
 			break;
 		}
@@ -826,7 +842,7 @@ add_vg(char *vg)
 {
 	struct vg_entry *p_vg;
 
-	printf("CLI: add_vg\n");
+	printf("CLI: add_vg for %s\n",vg);
 
 	/* check we already have it */
 	if(vg_pool_find(vg, true)) {
@@ -836,8 +852,10 @@ add_vg(char *vg)
 
 	/* allocate and init vg_entry */
 	p_vg = malloc(sizeof(*p_vg));
-	if (!p_vg)
+	if (!p_vg) {
+		fprintf(stderr, "Failed to allocate vg_entry struct\n");
 		return 1;
+	}
 
 	/* We rely on CLI to avoid truncated name or non-NULL terminated
 	   strings. Moreover, by dest is not smaller then src */
@@ -845,8 +863,11 @@ add_vg(char *vg)
 
 	/* VG and thread specific thread allocated */
 	p_vg->r_queue = alloc_init_queue();
-	if(!p_vg->r_queue)
+	if(!p_vg->r_queue) {
+		fprintf(stderr, "Failed worker queue creation for %s\n",
+			p_vg->name);
 		goto out;
+	}
 
 	/* Prepare and start VG specific thread */
 	p_vg->thr.r_queue = p_vg->r_queue;
@@ -861,6 +882,7 @@ add_vg(char *vg)
 	/* Everything ok. Add vg to pool */
 	LIST_INSERT_HEAD(&vg_pool.head, p_vg, entries);
 
+	printf("Successfully registered VG %s\n", p_vg->name);
 	return 0;
 out2:
 	free(p_vg->r_queue);
